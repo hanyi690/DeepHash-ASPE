@@ -56,40 +56,68 @@ export default function ImageUpload({ onImageSelected, onImageUploaded }: ImageU
     <div className="w-full">
       <div
         {...getRootProps()}
-        className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
-          isDragActive
-            ? 'border-primary-500 bg-primary-50'
-            : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50'
-        }`}
+        className={`relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer
+          transition-all duration-200 overflow-hidden
+          ${isDragActive
+            ? 'border-[#6366F1] bg-[#6366F1]/5 scale-[1.02]'
+            : 'border-gray-300 hover:border-[#6366F1]/60 hover:bg-gray-50'
+          }`}
       >
         <input {...getInputProps()} />
-        <div className="text-4xl mb-4">📷</div>
+
+        {/* 图标 */}
+        <div className="flex justify-center mb-4">
+          <div className={`w-16 h-16 rounded-full flex items-center justify-center transition-all duration-200
+            ${isDragActive ? 'bg-[#6366F1] text-white' : 'bg-gray-100 text-gray-400'}`}>
+            <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+          </div>
+        </div>
+
+        {/* 文本 */}
         {isDragActive ? (
-          <p className="text-primary-600 font-medium">拖拽图像到此处...</p>
+          <div>
+            <p className="text-[#6366F1] font-semibold text-lg">拖拽图像到此处...</p>
+            <p className="text-gray-500 text-sm mt-1">松开即可上传</p>
+          </div>
         ) : (
-          <>
+          <div>
             <p className="text-gray-700 font-medium mb-1">
               点击或拖拽上传图像
             </p>
             <p className="text-sm text-gray-500">
               支持 JPG、PNG、GIF、WebP 格式
             </p>
-          </>
+          </div>
+        )}
+
+        {/* 拖拽激活时的装饰 */}
+        {isDragActive && (
+          <div className="absolute inset-0 border-4 border-[#6366F1]/20 rounded-xl pointer-events-none" />
         )}
       </div>
 
+      {/* 预览 */}
       {preview && (
-        <div className="mt-4">
-          <div className="relative inline-block">
+        <div className="mt-6">
+          <div className="relative inline-block group">
             <img
               src={preview}
               alt="预览"
-              className="max-h-64 rounded-lg shadow-md"
+              className="max-h-64 rounded-xl shadow-lg transform group-hover:scale-[1.02] transition-transform duration-300"
             />
             {uploading && (
-              <div className="absolute inset-0 bg-black bg-opacity-50 rounded-lg flex items-center justify-center">
-                <div className="text-white">上传中...</div>
+              <div className="absolute inset-0 bg-black/60 rounded-xl flex items-center justify-center backdrop-blur-sm">
+                <div className="flex flex-col items-center">
+                  <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin mb-2" />
+                  <span className="text-white font-medium">上传中...</span>
+                </div>
               </div>
+            )}
+            {/* 悬停覆盖层 */}
+            {!uploading && (
+              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 rounded-xl transition-all duration-200 pointer-events-none" />
             )}
           </div>
         </div>

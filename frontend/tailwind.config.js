@@ -8,30 +8,59 @@ module.exports = {
   theme: {
     extend: {
       colors: {
+        // 主色 - Indigo
         primary: {
-          50: '#eff6ff',
-          100: '#dbeafe',
-          200: '#bfdbfe',
-          300: '#93c5fd',
-          400: '#60a5fa',
-          500: '#3b82f6',
-          600: '#2563eb',
-          700: '#1d4ed8',
-          800: '#1e40af',
-          900: '#1e3a8a',
+          50: 'rgb(var(--color-primary-50))',
+          100: 'rgb(var(--color-primary-100))',
+          200: 'rgb(var(--color-primary-200))',
+          300: 'rgb(var(--color-primary-300))',
+          400: 'rgb(var(--color-primary-400))',
+          500: 'rgb(var(--color-primary-500))',
+          600: 'rgb(var(--color-primary-600))',
+          700: 'rgb(var(--color-primary-700))',
+          800: 'rgb(var(--color-primary-800))',
+          900: 'rgb(var(--color-primary-900))',
         },
-        dark: {
-          50: '#f8fafc',
-          100: '#f1f5f9',
-          200: '#e2e8f0',
-          300: '#cbd5e1',
-          400: '#94a3b8',
-          500: '#64748b',
-          600: '#475569',
-          700: '#334155',
-          800: '#1e293b',
-          900: '#0f172a',
-        }
+        // 辅助色 - Emerald
+        secondary: {
+          50: '#ECFDF5',
+          100: '#D1FAE5',
+          200: '#A7F3D0',
+          300: '#6EE7B7',
+          400: '#34D399',
+          500: '#10B981',
+          600: '#059669',
+          700: '#047857',
+          800: '#065F46',
+          900: '#064E3B',
+        },
+        // 背景色
+        background: 'rgb(var(--background-rgb))',
+        // 中性色
+        gray: {
+          50: 'rgb(var(--gray-50))',
+          100: 'rgb(var(--gray-100))',
+          200: 'rgb(var(--gray-200))',
+          300: 'rgb(var(--gray-300))',
+          400: 'rgb(var(--gray-400))',
+          500: 'rgb(var(--gray-500))',
+          600: 'rgb(var(--gray-600))',
+          700: 'rgb(var(--gray-700))',
+          800: 'rgb(var(--gray-800))',
+          900: 'rgb(var(--gray-900))',
+        },
+      },
+      fontFamily: {
+        sans: ['Fira Sans', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+        mono: ['Fira Code', 'Courier New', 'monospace'],
+      },
+      transitionDuration: {
+        '200': '200ms',
+        '300': '300ms',
+      },
+      borderRadius: {
+        'lg': '0.75rem',
+        'xl': '1rem',
       },
     },
   },

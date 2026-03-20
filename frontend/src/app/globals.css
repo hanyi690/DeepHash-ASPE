@@ -2,36 +2,164 @@
 @tailwind components;
 @tailwind utilities;
 
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap');
+
 :root {
-  --foreground-rgb: 0, 0, 0;
-  --background-start-rgb: 255, 255, 255;
-  --background-end-rgb: 255, 255, 255;
+  /* 主色 - Indigo */
+  --color-primary-50: 238, 242, 255;
+  --color-primary-100: 224, 231, 255;
+  --color-primary-200: 199, 210, 254;
+  --color-primary-300: 165, 180, 252;
+  --color-primary-400: 129, 140, 248;
+  --color-primary-500: 99, 102, 241;
+  --color-primary-600: 79, 70, 229;
+  --color-primary-700: 67, 56, 202;
+  --color-primary-800: 55, 48, 163;
+  --color-primary-900: 49, 46, 129;
+
+  /* 辅助色 - Emerald */
+  --color-secondary-500: 16, 185, 129;
+  --color-secondary-600: 5, 150, 105;
+
+  /* 背景色 */
+  --background-rgb: 245, 243, 255;
+  --foreground-rgb: 30, 27, 75;
+
+  /* 中性色 */
+  --gray-50: 249, 250, 251;
+  --gray-100: 243, 244, 246;
+  --gray-200: 229, 231, 235;
+  --gray-300: 209, 213, 219;
+  --gray-400: 156, 163, 175;
+  --gray-500: 107, 114, 128;
+  --gray-600: 75, 85, 99;
+  --gray-700: 55, 65, 81;
+  --gray-800: 31, 41, 55;
+  --gray-900: 17, 24, 39;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 body {
+  font-family: 'Fira Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-      to bottom,
-      transparent,
-      rgb(var(--background-end-rgb))
-    )
-    rgb(var(--background-start-rgb));
+  background: rgb(var(--background-rgb));
+  min-height: 100vh;
+}
+
+code, pre, .font-mono {
+  font-family: 'Fira Code', 'Courier New', monospace;
+}
+
+/* 平滑滚动 */
+html {
+  scroll-behavior: smooth;
+}
+
+/* 减少动画偏好 */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 @layer components {
+  /* 按钮 - 主按钮 */
   .btn-primary {
-    @apply bg-primary-600 hover:bg-primary-700 text-white font-medium py-2 px-4 rounded-lg transition-colors duration-200;
+    @apply bg-[#6366F1] hover:bg-[#4F46E5] text-white font-semibold py-2.5 px-5 rounded-lg
+           transition-all duration-200 cursor-pointer inline-flex items-center justify-center
+           focus:outline-none focus:ring-2 focus:ring-[#6366F1] focus:ring-offset-2;
   }
 
+  /* 按钮 - 次按钮 */
   .btn-secondary {
-    @apply bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2 px-4 rounded-lg transition-colors duration-200;
+    @apply bg-white hover:bg-gray-50 text-gray-700 font-semibold py-2.5 px-5 rounded-lg
+           border border-gray-300 transition-all duration-200 cursor-pointer
+           inline-flex items-center justify-center
+           focus:outline-none focus:ring-2 focus:ring-[#6366F1] focus:ring-offset-2;
   }
 
+  /* 按钮 - 幽灵按钮 */
+  .btn-ghost {
+    @apply bg-transparent hover:bg-gray-100 text-gray-700 font-medium py-2 px-4 rounded-lg
+           transition-all duration-200 cursor-pointer
+           focus:outline-none focus:ring-2 focus:ring-[#6366F1] focus:ring-offset-2;
+  }
+
+  /* 卡片 - 扁平化风格 */
   .card {
-    @apply bg-white rounded-lg shadow-md p-6;
+    @apply bg-white rounded-xl border border-gray-200 p-6
+           transition-all duration-200;
   }
 
-  .input-primary {
-    @apply border border-gray-300 rounded-lg px-4 py-2 w-full focus:ring-2 focus:ring-primary-500 focus:border-transparent;
+  .card:hover {
+    @apply border-[#6366F1]/30;
   }
+
+  /* 卡片 - 可点击 */
+  .card-clickable {
+    @apply card cursor-pointer hover:shadow-lg hover:-translate-y-0.5;
+  }
+
+  /* 输入框 */
+  .input-primary {
+    @apply border border-gray-300 rounded-lg px-4 py-2.5 w-full
+           font-normal text-gray-900 placeholder-gray-400
+           focus:outline-none focus:ring-2 focus:ring-[#6366F1] focus:border-transparent
+           transition-all duration-200;
+  }
+
+  /* 标签 */
+  .badge {
+    @apply inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium
+           transition-all duration-200;
+  }
+
+  .badge-primary {
+    @apply badge bg-[#6366F1]/10 text-[#6366F1];
+  }
+
+  .badge-success {
+    @apply badge bg-emerald-500/10 text-emerald-600;
+  }
+
+  .badge-neutral {
+    @apply badge bg-gray-100 text-gray-600;
+  }
+
+  /* 进度条 */
+  .progress-bar {
+    @apply w-full bg-gray-200 rounded-full h-2 overflow-hidden;
+  }
+
+  .progress-bar-fill {
+    @apply h-full bg-gradient-to-r from-[#6366F1] to-[#818CF8] rounded-full
+           transition-all duration-300 ease-out;
+  }
+
+  /* 分割线 */
+  .divider {
+    @apply h-px bg-gray-200 my-4;
+  }
+
+  /* 选中状态 */
+  .nav-active {
+    @apply text-[#6366F1] font-semibold;
+  }
+}
+
+/* 工具类 */
+.text-gradient {
+  @apply bg-gradient-to-r from-[#6366F1] to-[#818CF8] bg-clip-text text-transparent;
+}
+
+.glass {
+  @apply bg-white/80 backdrop-blur-md border border-white/20;
 }
