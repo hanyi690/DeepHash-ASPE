@@ -1,0 +1,31 @@
+# Deep Learning
+torch>=1.10.0
+torchvision>=0.11.0
+
+# Cryptographic and Matrix Operations
+numpy>=1.21.0
+scipy>=1.7.0
+
+# Machine Learning
+scikit-learn>=0.24.0
+
+# Image Processing
+Pillow>=8.3.0
+
+# Text Processing
+nltk>=3.6.0
+
+# MS-COCO Dataset
+pycocotools>=2.0.4
+requests>=2.27.0
+
+# Visualization and Logging
+matplotlib>=3.4.0
+tensorboard>=2.8.0
+tqdm>=4.62.0
+
+# Utilities
+pyyaml>=5.4.0
+
+# Optional: Transformers for pre-trained text models
+# transformers>=4.10.0

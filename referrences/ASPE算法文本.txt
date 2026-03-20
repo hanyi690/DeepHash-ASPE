@@ -1,0 +1,1433 @@
+Secure kNN Computation on Encrypted Databases
+W. K. Wong, David W. Cheung, Ben Kao, and Nikos Mamoulis
+Department of Computer Science, The University of Hong Kong Pokfulam Road, Hong Kong
+wkwong2@cs.hku.hk, dcheung@cs.hku.hk, kao@cs.hku.hk, nikos@cs.hku.hk
+
+ABSTRACT
+Service providers like Google and Amazon are moving into the SaaS (Software as a Service) business. They turn their huge infrastructure into a cloud-computing environment and aggressively recruit businesses to run applications on their platforms. To enforce security and privacy on such a service model, we need to protect the data running on the platform. Unfortunately, traditional encryption methods that aim at providing "unbreakable" protection are often not adequate because they do not support the execution of applications such as database queries on the encrypted data. In this paper we discuss the general problem of secure computation on an encrypted database and propose a SCONEDB (Secure Computation ON an Encrypted DataBase) model, which captures the execution and security requirements. As a case study, we focus on the problem of k-nearest neighbor (kNN) computation on an encrypted database. We develop a new asymmetric scalar-product-preserving encryption (ASPE) that preserves a special type of scalar product. We use APSE to construct two secure schemes that support kNN computation on encrypted data; each of these schemes is shown to resist practical attacks of a different background knowledge level, at a different overhead cost. Extensive performance studies are carried out to evaluate the overhead and the efficiency of the schemes.
+Categories and Subject Descriptors
+H.2.7 [Database Administration]: Security, integrity, and protection
+General Terms
+Algorithms, Security
+Keywords
+Security, kNN, Encryption
+Permission to make digital or hard copies of all or part of this work for personal or classroom use is granted without fee provided that copies are not made or distributed for profit or commercial advantage and that copies bear this notice and the full citation on the first page. To copy otherwise, to republish, to post on servers or to redistribute to lists, requires prior specific permission and/or a fee. SIGMOD'09, June 29­July 2, 2009, Providence, Rhode Island, USA. Copyright 2009 ACM 978-1-60558-551-2/09/06 ...$5.00.
+
+1. INTRODUCTION
+Emerging computing paradigms such as database service outsourcing and utility computing (a.k.a. cloud computing) offer attractive financial and technological advantages. These are drawing interests of enterprises in migrating their computing operations, including DBMS's, to service providers. Nevertheless, many vocal consultants, including Gartner [7], have issued warnings on the security threats in the cloud computing model. Private information, which includes both customer data and business information, should not be revealed to unauthorized parties. In this paper we address a very important problem of security in services outsourcing: the elements of an encryption scheme and the execution protocol for encrypted query processing. More specifically, we study how sensitive data and queries should be transformed in an encrypted database environment and how a service provider processes encrypted queries on an encrypted database without the plain data revealed. We call our model of secure query processing SCONEDB (for Secure Computation ON an Encrypted DataBase).
+The conventional way to deal with security threats is to apply encryption on the plain data and to allow only authorized parties to perform decryption. Unauthorized parties, including the service provider, should not be able to recover the plain data even if they can access the encrypted database. Some previous works [2, 10, 11] have studied this encryption problem in the outsourced database (ODB) model. However, these studies are restricted to simple SQL operations, e.g., exact match of attribute value in point query [12]; comparisons between numeric values in range query [2]. In practice, users often interact with a database via applications in which queries are not easily expressible in SQL.
+Moreover, most of the previous methods were specially engineered to work against one specific attack model. However, the problem should be studied with respect to various security requirements, considering different attacker capabilities. In this paper we focus on k-nearest neighbor (kNN) queries and show how various encryption schemes are designed to support secure kNN query processing under different attacker capabilities. The kNN query is an important database analysis operation, used as a standalone query (e.g., in similarity search applications on top of multimedia databases) or as a core module of common data mining tasks (e.g., classification and clustering).
+
+139
+
+Player 3 (attacker)
+
+H
+
+Cryptanalysis
+
+DBA
+
+EDBMS
+
+Aux
+
+E(DB)
+
+Query Processor
+
+ET(t)
+
+R
+
+EQ(q)
+
+K t
+
+ET()
+
+DB
+
+Player 1
+
+EQ()
+
+q
+
+K
+
+D()
+
+D(R)
+
+Player 2
+
+Figure 1: The SCONEDB Model
+
+1.1 The SCONEDB Model
+Figure 1 shows our SCONEDB model for secure encrypted database computation. In our model, player 1 is the owner of a database DB on which player 2 wants to execute certain queries. To take advantage of the computational resources of a Service Provider (SP), instead of processing queries locally, player 1 exports DB to an Encrypted Database Management System (EDBMS) at which queries submitted by player 2 are processed. (In some applications, player 1 may not even store DB and rely on the EDBMS as the sole repository of the data.) For security, all the tuples in DB are encrypted by player 1 before they are exported to the EDBMS. The EDBMS maintains and processes the encrypted database, E(DB ). Likewise, queries submitted by player 2 are also encrypted. EDBMS executes an encrypted query on the encrypted database and returns to player 2 an encrypted result R (e.g., R is a set of encrypted tuples which are the answer of a kNN query). Player 2 applies a decryption function D on R to obtain the plain results.
+Under our SCONEDB model, players 1 and 2 have to agree on a security protocol. In particular, they choose a common encryption scheme. In SCONEDB, an encryption scheme consists of the following components:
+· A secret key K. A key K is required as a parameter to the encryption and decryption processes (note that a key may contain a number of components, e.g., RSA requires a pair of numbers as the key). In our model, the key is kept private to players 1 and 2.
+· A database encryption function ET (). The encrypted database E(DB ) is obtained by encrypting each tuple t in DB by ET (t, K).
+· A query encryption function EQ(). Each query q is encrypted by EQ(q, K) before it is submitted to the EDBMS.
+
+· A result decryption function D(). Each tuple t^ in the encrypted result R is decrypted by D(t^, K).
+· A set of auxiliary operators Aux. An auxiliary operator Ae in Aux operates on the encrypted database to obtain information for the purpose of answering queries. Note that Ae operates without knowing the secret key K and hence has no access to the plain tuples. For example, for kNN queries, Ae may return the Euclidean distance between an encrypted database tuple p and an encrypted query tuple q.
+The main goal in the SCONEDB model is to design an encryption scheme in which Aux can operate on E(DB) to support query processing.
+1.2 Attack models
+In our SCONEDB model, we assume that the EDBMS, which is possibly located at a third party (e.g., a service provider in the cloud), is not secure. Therefore, we assume that an attacker (player 3) sees the environment of the EDBMS. In particular, the attacker has accesses to the encrypted database, the encrypted queries, and the encrypted results. Also, we assume that the attacker knows what encryption scheme is being used. That is, he knows all the components of the scheme except the key. These include the encryption and decryption procedures (ET (), EQ() and D()) and the set of auxiliary operators Aux. We assume that the attacker's objective is to recover a plain database DB A  DB . We assume the attacker is capable to execute PTIME cryptanalysis algorithms with respect to the size of the encrypted database. Our objective is to deny the attacker from obtaining DB A. Apart from E(DB ), the attacker may possess additional knowledge about the original data. To better evaluate the strength of an encryption scheme, we classify attackers into different levels based on the knowledge H they possess.
+· Level 1: the attacker observes only the encrypted database E(DB ), i.e., H = E(DB ) . This corresponds to the ciphertext-only attack (COA) in cryptography [5]. In practice, there are applications accessed by secluded users, for which others can hardly observe any information other than the encrypted data.
+· Level 2: Apart from E(DB ), the attacker knows a set of plain tuples P in DB but he does not know the corresponding encrypted values of those tuples in E(DB ), i.e., H = E(DB ), P where P  DB . This corresponds to the known-sample attack in database literature [15]. For example, if the attacker observes the encrypted database of a bank and some of his sources are customers of the bank, he then knows the values of several tuples in the plain database.
+· Level 3: Apart from E(DB ), the attacker observes a set of tuples P in DB and he knows the corresponding encrypted values of those tuples, i.e., H = E(DB ), P, I , where P  DB and I(t) = ET (t, K) for all t  P . This corresponds to the known-plaintext attack (KPA) in cryptography [5] or known input-output attack in database literature [15]. For example, if the attacker opens a new account at the bank and observes only one new encrypted tuple afterwards, he can associate the new account's information (unencrypted) with the encrypted value of the new tuple.
+
+140
+
+A higher-level attack is more powerful than a lower-level one. If an encryption scheme resists a higher level attack, it resists a lower level one as well. Among the 3 attack levels defined, we remark that level-2 attacks capture practical scenarios. This is because in some applications, it is not difficult to observe a small number of plain database tuples (e.g., by artificially inserting "spy" tuples in DB ).
+We assume the attacker cannot observe the plain queries in all cases. In particular, we do not allow the attacker to disguise as player 2 and submit queries to the database. Note that level-3 attacks are rare in practice, since it is not easy for someone who does not hold the encryption key to associate known plain tuples to their encrypted values.
+1.3 kNN on SCONEDB model
+In this paper we focus on kNN queries and illustrate how an encryption scheme (which includes the above five components) can be developed to securely support kNN applications under the SCONEDB model. A kNN query searches for k points in a database that are the nearest to a given query point q. Note that each database tuple can be modeled as a multi-dimensional point, if we consider some of its attributes as dimensions and their values as their coordinates. One approach to securely support kNN is to use distance-preserving transformation (DPT) to encrypt data points [20] so that the distance between any two encrypted points in E(DB ) is the same as that between the corresponding original points in DB . Given this property, kNN can be computed on the encrypted database. Unfortunately, such transformation is shown to be not secure in practice. If an attacker can access the DPT-encrypted database E(DB ) and knows a few points in the plain database DB , he can recover DB entirely [15].
+A similar problem on kNN computation at an untrusted platform is studied for location based services (LBS) [8, 17, 9, 13], where users submit queries to an untrusted server which holds the data. The focus of such applications is on protecting the privacy of users (query content), since the database is assumed to be owned by the server [9]. While some studies in LBS also address the privacy of records in the database, k-anonymity is adopted as the standard to protect the database [8, 17]. We remark that k-anonymity has a different security goal compared to our model; k-anonymity aims at preventing an attacker to identify an individual from the database, but the content in the database may be exposed. In addition, most of these models require the existence of a trusted intermediate party (location anonymizer), which handles the data and query transformation. This party, except from being a single point of attack, compromises performance as every query and result has to pass through it. In this paper we seek for alternative encryption schemes that protect data security and at the same time they return accurate kNN results to users.
+In the rest of the paper, we study various encryption schemes and analyze their vulnerability to different levels of attacks. In Section 2, we show that if the distance between any two points in the plain database DB can be determined from the points' encrypted values in E(DB ) (a property we call distance recoverability), then the encryption scheme is vulnerable to level-2 attacks. This observation leads us to develop an asymmetric scalar-product-preserving encryption (ASPE) that is not distance-recoverable (Section 3). ASPE can be used to construct a scheme to support kNN compu-
+
+tation that resists level-2 attacks. In Section 4, we describe how we can extend this scheme to resist level-3 attacks, however, with additional overhead. Section 5 empirically evaluates the proposed schemes. In Section 6, we briefly discuss how our encryption scheme effectively transforms the kNN problem into a top-k problem, and how that leads to efficient solutions to the problem of secure kNN computation. Section 7 reviews related work. Finally, Section 8 further discusses our SCONEDB model and concludes the paper.
+2. DISTANCE-RECOVERABLE ENCRYPTION
+In kNN computation, distances between database points to a query point are computed for finding the nearer neighbors to the query point. To solve the secure kNN problem, it is natural to consider adopting an encryption scheme that allows the system to compute d(p1, p2) on E(DB ) for database points p1 and p2 in DB . kNN can then be computed efficiently w.r.t. such a scheme. However, we show in this section that no encryption scheme is secure against level-2 attacks if it allows distance computation as suggested above. We start with the definition of distance recoverability.
+Definition 1. (Distance-recoverable encryption (DRE)) Given an encryption function E and a key K, let E(p, K) be the encrypted value of a point p in DB . E is distancerecoverable if and only if there exists a computational procedure f such that p1, p2, K, f (E(p1, K), E(p2, K)) = d(p1, p2).
+A DPT [20] is an example of DRE. This is because, by definition, a DPT preserves distances in the transformed space. Hence, if E is a DPT, we have d(E(p1, K), E(p2, K)) = d(p1, p2). So, f is simply the Euclidean distance. A DPT transforms the space by rotations and translations. For a point p in DB represented as a column vector, the encrypted value E(p, K) of p w.r.t. a DPT E can be expressed as N p + t, where N is a d × d orthogonal matrix and t is a d-dimensional column vector. Distance between points is preserved, i.e., d(p1, p2) = d(E(p1, K), E(p2, K)). So, DPT supports efficient kNN computations. Here, N and t together form the encryption key K. Regrading level-1 attacks, the attacker cannot recover DB since he does not know N or t [20]. So, DPT is a scheme that resists level-1 attacks. Note that in our model, we assume that the attacker knows E. Therefore, if E is a DRE, we assume that the attacker knows f as well. For example, if E is a DPT, the attacker knows that f is the Euclidean distance function d(). However, we will show that DRE, and hence DPT, is not secure under level-2 or level-3 attacks. We first show how to attack DRE at level-3.
+Theorem 1. Assume a DRE E is used to encrypt DB to get E(DB ). A level-3 attacker with H = E(DB ), P, I can recover DB if P contains at least d + 1 points xi (1  i  d + 1) such that the set of vectors {xj - x1|2  j  d + 1} are linearly independent.
+Proof. Since the encryption is a DRE, the distance between any two points p and q, d(p, q), can be computed by the attacker using f (E(p, K), E(q, K)). Suppose the attacker wants to find the original value of an encrypted point y  E(DB ). Let the set of known points in P be {x1, x2, ..., xd+1} and y be the original value of y before encryption. He can set up d + 1 equations: d(xi, y) = f (I(xi), y ) for
+
+141
+
+i = 1 to d + 1. Note that the RHS of the equations are known numeric values to the attacker. Each equation thus represents a d-dimensional hypersphere. The solution of y lies on the intersection of the hyperspheres. Since y exists in the database, a solution must exist. We can show that if the set of vectors {xj - x1|2  j  d + 1} are linearly independent, the d + 1 hypersheres intersect at exactly one point (see Appendix A). So, y can be uniquely determined. Hence the attacker can recover the entire database.
+The level-3 attack shown above is independent of the implementation of DRE. So, no DRE (e.g., DPT) can survive this level-3 attack. Furthermore, we can show that DRE has poor resistance to level-2 attacks by showing that the attacker can "upgrade" his level-2 knowledge to level-3 using signature linking attack.
+Let us explain signature linking attack. At level-2, H = E(DB ), P , the attacker constructs the signature of P by the pairwise distances between every two points in P . Suppose the points in P are ordered and P = {x1, x2, ..., x|P |}. The signature of P , sig(P ), is a vector of size |P |C2 of the form (d(x1, x2), d(x1, x3), ..., d(x1, x|P |), d(x2, x3), ..., d(x|P |-1, x|P |)). The attacker tries to find an ordered set of encrypted points Q in E(DB ), such that |Q| = |P | and Q gives the same signature as P . Let Q = {x1, x2, ..., x|P |}. sig(Q) is (f (x1, x2), f (x1, x3), ..., f (x1, x|P |), f (x2, x3), ..., f (x|P |-1, x|P |)). If there is only one set Q with a matching signature, the attacker can conclude that xi is the encrypted value of xi, i.e., he can construct I with I(xi) = xi for all xi  P . With this I, H = E(DB ), P, I , and the attacker can now carry out a level-3 attack.
+The success of signature linking attack rests on two issues: (1) Is it easy to find Q? (2) Is it likely that another set, say Q , which is not the transformed set of the points in P , happens to give the same signature? (We call this a signature collision.) For the first issue, we remark that although the search space is huge1, it can be pruned very effectively. For example, given two encrypted points x1 and x2 such that f (x1, x2)  sig(P ), we know that Q cannot contain both x1 and x2. For the second issue, we can show that the probability of signature collision is generally very small (see Appendix B). Also, if multiple Qs are found with the same signature as P , the attacker can increase the size of P to lower the likelihood of collision and repeat the attack. In Section 5, we will report experiments for evaluating the feasibility of signature linking attack in terms of the number of points in P required and its computation cost. The results confirms that the attacker can easily recover the database at an affordable cost.
+3. ASYMMETRIC SCALAR-PRODUCT -PRESERVING ENCRYPTION
+From our discussion, we observe that the weakness of DRE comes from the fact that the attacker is able to recover distance information from the encrypted database. More specifically, given any two points p1 and p2 in DB, their distance d(p1, p2) can be determined from their encrypted values ET (p1, K) and ET (p2, K). These distances allow the attacker to compute signatures and thus to apply the signature linking attack. To resist level-2 attacks, we need an
+1If there are n points in the database, there are nP|P | candidate Q sets to examine.
+
+encryption function that does not reveal distance information. For kNN search, we observe that exact distance computation is not necessary. Rather, we only need a distance comparison operation. Given two points p1, p2 in DB , we must decide which of the two points is nearer to a query point q. Note that,
+
+d(p1, q)  d(p2, q)
+
+||p1||2 - 2p1 · q + ||q||2  ||p2||2 - 2p2 · q + ||q||2
+
+||p1||2 - ||p2||2 + 2(p2 - p1) · q  0
+
+(1)
+
+where ||p|| represents the Euclidean norm of p, and · represents scalar product. ||p||2 can be represented by p · p. So, the inequality is decomposed to a number of scalar product computations. This suggests a scalar-product-preserving encryption Espp, i.e., p1, p2  DB , p1 · p2 = Espp(p1, K) · Espp(p2, K), for kNN computation. Unfortunately, a scalarproduct-preserving encryption is also distance-recoverable and hence is not secure against level-2 attacks.
+
+Theorem 2. Scalar-product-preserving encryption is distance-recoverable.
+
+Proof. Let p1 (resp. p2) be the encrypted point of p1 (resp. p2) in DB . We define the function f by
+
+f (p1, p2) = p1 · p1 - 2(p1 · p2) + p2 · p2
+
+(2)
+
+Since the encryption preserves scalar product, we have RHS = p1 · p1 - 2(p1 · p2) + p2 · p2 = d(p1, p2).
+
+There are three types of scalar products: (type-1) scalar product of a database point with itself (e.g., ||p||2); (type2) scalar product of a database point with the query point; (type-3) scalar product of two different database points p1 and p2. We observe that Eq. 1 consists of type-1 and type2 products but not type-3 products, which are essential in Eq. 2. If an encryption preserves only type-1 and type-2 products but not type-3 products, then we can compare the distances d(p1, q) and d(p2, q) by Eq. 1, but the attacker cannot recover distances using Eq. 2. Furthermore, for each point p in the database, its corresponding type-1 scalar product, ||p||2, is fixed. Hence, if player 1 pre-computes all type1 scalar products and make them available (e.g., by storing them in the database) for kNN query processing, then the encryption needs not preserve type-1 products either. In summary, we need an encryption that preserves type-2 but not type-1 or type-3 scalar products. With the precomputed type-1 scalar products, we can verify the inequality of Eq. 1 on the encrypted database to implement the distance comparison operation. Since the encryption does not preserve type-1 or type-3 products, it is not distancerecoverable by design. The encryption is thus resilient to level-2 attacks.
+
+Definition 2. (Asymmetric scalar-product-preserving encryption (ASPE))
+Let E be an encryption function and E(p, K) be the encrypted value of a point p given a key K. E is an ASPE if and only if E preserves type-2 scalar products but not the other two types, i.e.,
+(i) pi · q = E(pi, K) · E(q, K) for any pi in DB and any query point q and
+(ii) pi · pj = E(pi, K) · E(pj, K) for any pi and pj in DB .
+
+142
+
+In Definition 2, we require that the encrypted value of a query q not equal to that of any point pj in DB , even when q = pj. This suggests that query points and database points should be encrypted differently. That is the encryption functions ET () and EQ() in the encryption scheme should be different.
+The scalar product of p and q (represented by column vectors) can be represented as pT Iq, where pT is the transpose of p and I is a d × d identity matrix. I can be decomposed to M M -1 for any invertible matrix M , i.e., pT q = (pT M )(M -1q). If we set p = ET (p, K) = M T p (resp. q = EQ(q, K) = M -1q), it is not possible for one to determine the value of p (resp. q), from p (resp. q ) without knowing M . Also, p T q = pT M M -1q = pT q, i.e., type-2 scalar product is preserved. Suppose p1 and p2 are the encrypted points of p1 and p2 in DB respectively, then p1T p2 = p1T M M T p2, which is not equal to pT1 p2 in general. Type-1 and type-3 scalar products are therefore not preserved. So, we can implement ASPE by using M and M -1 as the transformations for database points and queries, respectively.
+3.1 A Secure Scheme Against Level-2 Attacks
+We have described a special encryption function ASPE that preserves type-2 scalar products; together with the precomputed type-1 scalar products, we can perform distance comparisons to find the neighbors of a query point. However, if the type-1 product ||p|| is revealed to the attacker, he knows that p lies on a hypersphere that is centered at the origin with a radius ||p||. Although the exact location of p is unknown, the information revealed partially compromises security. In this section, we show how we hide this information by "encrypting" ||p|| and how the EDBMS computes kNN on such encrypted data.
+Our idea is to treat a pre-computed type-1 scalar product ||p||2 as the (d+1)-st dimension of the point p. More specifically, given a (d-dimensional) database point p, we create a (d+1)-dimensional point p^. The first d dimensions of p^ are those of p, and the (d+1)-st dimension of p^ is set to -0.5||p||2. (We multiply ||p||2 with this factor to facilitate distance comparisons, as shown later by Theorem 3.) The extended database points are then transformed (encrypted) using ASPE.
+Similarly, we need to extend a query q to a (d+1)-dimensional point q^ before applying ASPE. The simplest way is to set the (d+1)-st dimension of q^ to 1. The weakness of this simple method is that the unencrypted query points q^'s all lie on a d-dimensional hyperplane with the unit vector in the (d+1)-st dimension being the normal of the hyperplane. Since APSE is a linear transformation, the encrypted query points all lie on a d-dimensional hyperplane in the transformed space as well. The attacker can determine the normal of that hyperplane in the transformed space. By considering the normal in the original space and the normal in the transformed space, the attacker obtains some level-3-like information, which is undesirable.
+To avoid this problem, we introduce a random factor. For each query q, we generate a random number r > 0 and scale q^ by r, i.e., q^ = r(qT , 1)T . We will show in Theorem 3 that this scaling does not affect the correctness of the distance comparison operation.
+We summarize in Scheme 1 the procedures of the encryp-
+
+· Key: a (d + 1) × (d + 1) invertible matrix M .
+· Tuple encryption function ET : Consider a database point p. (1) Create a (d+1)-dimensional point p^ = (pT , -0.5||p||2)T . (2) The encrypted point p = M T p^.
+· Query encryption function EQ: Consider a query point q. (1) Generate a random number r > 0. Create a (d+1)dimensional point q^ = r(qT , 1)T . (3) The encrypted query point q = M -1q^.
+· Distance comparison operator Ae: Let p1 and p2 be the encrypted points of p1 and p2 respectively. To determine whether p1 is nearer to a query point q than p2 is, the system checks whether (p1 - p2) · q > 0, where q is the encrypted point of q.
+· Decryption function D: Consider an encrypted point p . The original point p = dM T -1 p where d is a d×(d+1) matrix which projects on the first d dimensions and d = (Id, 0) where Id is the d × d identity matrix.
+Scheme 1. ASPE
+
+tion scheme using ASPE.2
+
+Theorem 3. Suppose p1, p2 and q are the encrypted points of the database points p1, p2 and the query point q, respectively, Scheme 1 correctly determines whether p1 is closer to q than p2 is by evaluating (p1 - p2) · q > 0.
+
+Proof. Note that
+
+(p1 - p2) · q
+
+= (p1 - p2)T q = (M T p^1 - M T p^2)T M -1q^ = (p^1 - p^2)T q^.
+
+The scalar product of these two (d+1)-dimensional points can be represented as
+
+(p1 - p2)T (rq) + (-0.5||p1||2 + 0.5||p2||2)r = 0.5r(||p2||2 - |p1||2 + 2(p1 - p2)T q) = 0.5r(d(p2, q) - d(p1, q))
+
+So, the condition is equivalent to 0.5r(d(p2, q) - d(p1, q)) > 0  d(p2, q) > d(p1, q).
+
+3.2 Cost and security analysis
+In this section, we analyze the cost of Scheme 1 and study whether the scheme can resist level-2 and level-3 attacks. First, the cost:
+
+· Encryption and decryption: To encrypt and decrypt,
+we perform two kinds of operations: (1) multiplication
+of an O(d) × O(d) matrix and an O(d)-dimensional point, which takes O(d2) time, and (2) computation
+of the Euclidean norm of an O(d)-dimensional point,
+which takes O(d) time. Computing ET () requires both
+2There is a special case that if an encrypted point is the origin of the transformed space, the corresponding unencrypted point is the origin of the original space. In order to avoid this special inference, we can perform a translation before applying Scheme 1. In that case, the origin is translated to a random point O . This translation does not affect the correctness of the scheme.
+
+143
+
+operations and hence it takes O(d2) time. Computing EQ() or D() requires (1) only and that takes O(d2) time.
+· kNN computation using linear scan: Given an encrypted query q , the EDBMS is required to compute only one scalar product for each encrypted database point pi. This takes O(nd) time where n is the size of database. Then, every distance comparison can be made by two scalar products: p1 · q and p2 · q . This takes O(1). In a linear scan, we can use a heap to store the kNN results. So, it takes at most O(lg k) distance comparisons for a point. In summary, a kNN query can be computed in O(nd lg(k)) time. Note that the time complexity is the same as linear scan on unencrypted data except that we have (d+1)-dimensional points instead of d-dimensional points. (We will discuss how more sophisticated kNN algorithms can be derived in Section 6.)
+Regrading attacks, we first show that Scheme 1 is not secure against level-3 attacks.
+Theorem 4. Assume that Scheme 1 is attacked by a level3 attacker whose knowledge H = E(DB ), P, I . If there are d + 1 points xi (1  i  d + 1) in P such that the vectors (xi, -0.5||xi||2) are linearly independent, then the attacker can recover DB from E(DB ).
+Proof. To recover DB from E(DB ), one needs to recover the encryption key, that is the (d + 1) × (d + 1) matrix M . Since we know P = {x1, x2, ..., xd+1} and the corresponding encrypted values I(xi), we can set up the following equations to solve M : M x^i = I(xi) where x^i = (xi, -0.5||xi||2)T for i = 1 to d + 1. Let A, B be (d + 1) × (d + 1) matrices such that A = (x^1, x^2, ..., x^d+1) and B = (I(x1), I(x2), ..., I(xd+1)). We have M A = B. Note that A is invertible since the x^i's are linearly independent. We can compute M = BA-1. Hence, we are able to recover any encrypted point in E(DB ).
+We remark that level-3 attacks are rare, since it is generally difficult for the attacker to obtain the necessary knowledge. Although Scheme 1 is not secure against level-3 attacks, we can show that it is resilient to common level-2 attacks. Under level-2 attacks, H = E(DB ), P , any point in E(DB ) can be the encrypted point of a given point in P . The attacker must acquire more knowledge in order to attack. For example, he can link the known points in P to a set of encrypted points and use the signature linking attack (see Section 2). We will show in Theorem 5 that Scheme 1 does not reveal the distances between database points and thus it prevents the distance-based signature linking attack.
+Theorem 5. ET in Scheme 1 is not distance-recoverable.
+Proof. A detailed proof is presented in Appendix C. Here we give an idea of the proof. If an encryption E is distance-recoverable (i.e., E is a DRE), then by our definition, there exists a computational procedure f such that for all points p1 and p2 and any encryption key K1 such that a1 = E(p1, K1) and a2 = E(p2, K1), we have f (a1, a2) = d(p1, p2). That is, given the encrypted values a1 and a2, the distance d(p1, p2) can be computed by f regardless of the encryption key. In our proof, we show that it is possible to construct two points x and y and an encryption key K2 such that
+
+1. E(x, K2) = a1 = E(p1, K1), and
+2. E(y, K2) = a2 = E(p2, K1), but
+3. d(x, y) = d(p1, p2).
+Now, if E is a DRE, we have
+f (a1, a2) = f (E(p1, K1), E(p2, K1)) = d(p1, p2) and
+f (a1, a2) = f (E(x, K2), E(y, K2)) = d(x, y)
+A contradiction since d(p1, p2) = d(x, y).
+There are other attacking techniques that are applicable at level-2. Here we consider three examples, namely, PCA, Duplicate Analysis, and Brute-force attack.
+Principle component analysis (PCA) has been proposed in [15] to match the correlations in the set of known data points and the correlations in the encrypted data. The matching result enriches the knowledge of the attacker. In our scheme, the values on each dimension of E(DB ) is a linear combination of the values on all dimensions in the plain database. So, ASPE does not preserve the correlations among the original dimensions in the transformed space. Hence, PCA is not applicable. Duplicate analysis [2] exploits the observation that the domains of some attributes may be small, e.g., day of the month. Observations on the duplicates in the encrypted database may help an attacker to find the domain of an attribute. Duplicate analysis targets at value-based encryption, i.e., each value in each dimension is encrypted individually. Since Scheme 1 is a tuple-based encryption, duplicate analysis on individual attribute is not applicable.
+As another option, the attacker may use a brute-force exhaustive attack. We have shown in Theorem 4 that d + 1 points are enough to solve the keys in a level-3 attack. Given a level-2 attack, without the knowledge of I, the attacker has to try every possible I to recover the database. He can divide P into two sets: a training set Pt and a testing set Pv where |Pt| = d + 1 and Pv = P - Pt. He randomly picks a set of d + 1 encrypted points Q and sets up a hypothesis that Q contains the corresponding encrypted points of the points in Pt. Then, the attacker can set up equations to solve for M and use Pv to verify the hypothesis: if the recovered database contains Pv, the hypothesis may be correct; otherwise, the hypothesis cannot be true. The confidence in the verification of hypothesis increases with the number of points in P . However, this brute-force exhaustive attack is exponentially expensive for the attacker. There are nPd+1 = O(nd+1) possible candidates of Q. For each candidate, the attacker performs a `decryption' of database using the recovered key which takes O(n) decryptions. For example, if n = 10K, d = 2 and an attacker is capable to perform 1M decryptions in a second, it takes more than 310 years to try all hypotheses. Our scheme is therefore very resilient against this level-2 brute-force attack.
+4. DEALING WITH STRONGER ATTACKS
+In this section we discuss how the ASPE-based encryption scheme can be enhanced to resist level-3 attacks.
+4.1 Random Asymmetric Splitting
+A weakness of Scheme 1 is that given an enough number of points in P , a level-3 attacker can set up enough number of equations to solve for the unknowns in the transformation matrix M . To make the scheme harder to crack, one method
+
+144
+
+is to introduce randomness into the scheme to make it very difficult to set up the equations. To achieve that, given a database point p, we split the value of p at each dimension randomly. More specifically, we randomly generate two ddimensional points pa and pb (called two random shares) such that for each dimension i, we have p[i] = pa[i] + pb[i]. For simplicity, we write p = pa + pb. Note that for any query q, we have p · q = pa · q + pb · q, and thus p · q can be computed by two scalar products. As a 2-D example, if p = (3, 7), we can create pa = (10, 2) and pb = (-7, 5). We call this method p-splitting.
+We can use two ASPEs with different keys to encrypt and to compute the two scalar products. In other words, we generate two transformation matrices, M1 and M2, and encrypt the two random shares of p as pa = M1T pa, and pb = M2T pb. If q is also encrypted by the same ASPEs to obtain two encrypted query points: qa = M1-1q and qb = M2-1q, we can compute spa = pa · qa and spb = pb · qb separately and recover p · q by spa + spb. Hence, this splitting preserves type-2 scalar products and allows the distance comparison operation to be correctly evaluated. Note that in the above description, unlike p, q is not split.
+This splitting technique alone, however, does not improve security. Consider a query point q and let qa and qb be the encrypted points of q using the two ASPEs M1 and M2. We know that qa = M1-1M2qb. Note that M1-1M2 is an unknown d × d matrix. If an attacker observes d (encrypted) queries, he can construct a square matrix Qa whose columns are formed by the observed qa vectors. Likewise, the observed qb vectors can be used to obtain a square matrix Qb. We have Qa = M1-1M2Qb and thus M1-1M2 = QaQb-1.
+Now, a level-3 attacker can set up the necessary equations to solve for M1 and M2 in the following way. Since pa = M1T pa, we have (QaQb-1)T pa
+= (QaQb-1)T M1T pa = (M1-1M2)T M1T pa
+= M2T (M1T )-1M1T pa = M2T pa
+Hence, (QaQb-1)T pa + pb = M2T pa + M2T pb = M2T p. For a level-3 attacker, if p is a database point in his knowledge base P , the attacker knows the encrypted values pa and pb. So, t = (QaQb-1)T pa + pb can be computed by the attacker. He can establish the equation: M2T p = t and solve for M2 as shown in the discussion of Theorem 4. The attacker can also solve for M1 similarly, and thus crack the encryption scheme.
+Instead of splitting p, we can also consider splitting q. Similar to the previous procedure, we can split q into two random shares qa and qb so that qa +qb = q. The two vectors qa and qb are encrypted using two ASPEs with different keys to get qa = M1-1qa and qb = M2-1qb. Also, p (not split) is encrypted by the two ASPEs and we get pa = M1T p and pb = M2T p. We call this q-splitting. Now, player 1 and player 2 can secretly agree on what to split in the encryption scheme; they can either agree to applying splitting only on database points, or only on query points. In order for the attacker to correctly set up equations to solve for the transformation matrices, the attacker has to know which configuration (i.e., p-splitting or q-splitting) players 1 and 2 have agreed on. Or, he has to attack each configuration separately. That doubles his cost.
+We can further extend this splitting technique by applying
+
+splitting on each dimension independently. Again, consider a 2D example where p = (x1, x2) and q = (y1, y2). We may create pa = (x1, x2a), pb = (x1, x2b), qa = (y1a, y2), and qb = (y1b, y2) such that x2a + x2b = x2 and y1a + y1b = y1. In this example, we split p on the 2nd dimension and q on the 1st dimension. The scalar product of p · q is preserved: p · q = pa · qa + pb · qb.
+In general, for each dimension i, players 1 and 2 secretly agree on which of p[i] and q[i] to split. They thus share a configuration bit vector, which is a d-bit vector such that each entry in the bit vector indicates whether p-splitting or q-splitting is used for the corresponding dimension. Basically, the attacker has to try all configurations in order to solve for the transformation matrices. Since there are 2d possible configurations, the enhanced scheme is 2d more costly to attack compared with Scheme 1.
+
+4.2 Adding Artificial Dimensions
+
+We can improve the security of our encryption scheme by
+
+making d larger. This can be achieved by adding artificial
+
+dimensions to the data points. We extend a d-dimensional
+
+data point p (q) to a d dimensional (d  d ) point p (q)
+
+by padding artificial attributes such that the scalar product
+
+over the added attribute values is 0.
+
+More specifically, The values of dimensions d+1 to d of p
+
+and q are generated randomly. We partition the range [d +
+
+1, d ] into two groups: Gp, Gq. Gp (resp. Gq) represents the
+
+indexes of the dimensions on which we perform p-splitting
+
+(resp. q-splitting). Without loss of generality, let us assume
+
+Gp = [d + 1, s] and Gq = [s + 1, d ] for some integer s. We
+
+will discuss how to generate the values for dimensions d+1
+
+to s. (The values of the other dimensions can be similarly
+
+generated except that we swap the roles of p and q.) First,
+
+we create a set of s - d pre-generated random values: wd+1,
+
+wd+2, ..., ws, where ws = 0 if s - d  2. These random
+
+numbers become parts of the encryption key. We set p[i] =
+
+wi for each i in [d+1,s]. Although we use the same set of
+
+values (wi's) for every p, each p is split into two shares pa
+
+and pb randomly. Hence, the generated pa's and pb's appear
+
+as random points to the attacker.
+
+For each q, the values of dimensions d+1 to s-1 are all gen-
+
+erated randomly. (Unlike p, different q could use a different
+
+set of random numbers.) Let tc be the number assigned to
+
+q[c] (d + 1  c  s - 1). The s-th dimension of q is set to
+
+-
+ts =
+
+. s-1
+i=d+1
+
+wi ti
+
+ws
+
+(If s = d + 2, we set ts
+
+to 0 if ws = 0
+
+or any value if ws = 0.) It is easy to see that the scalar
+
+product of p and q over the attributes d+1 to s is 0.
+
+We repeat the above value assignment procedure to at-
+
+tributes s+1 to d except that the roles of p and q are
+
+switched. Since the scalar product over the artificial at-
+
+tributes is by design equal to 0, we have p · q = p · q.
+
+4.3 Analysis on the Refined Scheme
+The introduction of the splitting technique and artificial attributes significantly increases the cost of the attacker. We can integrate the two new techniques into Scheme 1 by first applying them before ASPE is applied. The enhanced encryption scheme is shown in Scheme 2.
+As we have mentioned before, the number of possible ways of splitting is 2d , which is exponentially large. In order to make the system secure, d must be sufficiently large. RSA keys are required to be at least 1024-bit. The general
+
+145
+
+· Key: two d × d invertible matrices M1, M2; A bit string S of d bits: Si denotes the i-th bit in S; d - (d + 1) random numbers: wd+2, wd+3, ..., wd .
+· Tuple encryption function ET : Consider a database point p. (1) Create a d -dimensional point p^ where the first d dimensions are copied from p. p^[d + 1] is set to -0.5||p||2. For i = d + 2 to d , if Si = 1, set p^[i] to wi; otherwise, set p^[i] to a random number. For the last dimension with which Si = 0, p^[i] is given a value so that the scalar product over the artificial attributes is 0 (see Section 4.2). (2) Create two shares of p^: p^a and p^b. For i = 1 to d , if Si = 1, we randomly split the value of p^[i] into p^a[i] and p^b[i]. If Si = 0, p^a[i] and p^b[i] are both set to p^[i]. (3) The encrypted value of p is the pair (pa = M1T p^a, pb = M2T p^b).
+· Query encryption function EQ: Consider a query point q. (1) Generate a random number r > 0. Create a d dimensional point q^ where the first d dimensions are given by rq. The (d+1)-st dimension is set to r. For i = d+2 to d , if Si = 0, q^[i] is set to wi; Otherwise, q^[i] is set to a random number. For the last dimension with which Si = 1, q^[i] is given a value so that the scalar product over the artificial attributes is 0. (2) Create two shares of q^: q^a and q^b. For i = 1 to d , if Si = 0, we randomly split the value of q^[i] into q^a[i] and q^b[i]. If Si = 1, q^a[i] and q^b[i] are both set to q^[i]. (3) The encrypted value of q is the pair (qa = M1-1q^a, qb = M2-1q^b).
+· Distance comparison operator Ae: Let (p1a, p1b) and (p2a, p2b) be the encrypted values of p1 and p2 respectively. To determine whether p1 is nearer to a query point q than p2, the system checks whether (p1a -p2a)·qa +(p1b -p2b)·qb > 0 where (qa, qb) is the encrypted value of q.
+· Decryption function D: Consider an encrypted value (pa, pb). First, recover the two shares and extract the first d dimensions in it: pa = dM1T -1 pa and pb = dM2T -1 pb where d is a d × (d + 1) matrix which is the projection on the first d dimensions. Then, p[i] is equal to pa[i] if Si = 0; or pa[i] + pb[i] if Si = 1.
+Scheme 2. Enhanced ASPE
+consensus is that 1024-bit RSA keys are roughly equivalent in strength to that of 80-bit symmetric keys. We can set d  80 so that the search space is sufficiently large. In addition, a large d implies larger transformation matrices, making the encryption scheme even harder to crack. Therefore, it is generally very difficult for the attacker to successfully attack Scheme 2.
+Theorem 6. Scheme 2 is resilient to a level-3 attack if the attacker cannot derive the splitting configuration, i.e., the bit string S of the key in Scheme 2.
+Proof. Let the knowledge of the attacker be H = E(DB), P, I . Without loss of generality, let us assume d = d + 1, i.e., no artificial attributes are added. (Note that the addition of artificial attributes will only increase the security of the scheme.) For any point pi  P , by definition, a level-3 attacker knows the encrypted values (pia, pib). If the attacker does not know the splitting configuration, he has to model p^ia and p^ib as two random d -dimensional vectors.
+
+The equations for solving the transformation matrices are: M1T p^a = pa and M2T p^b = pb, where M1 and M2 are two d × d unknown matrices. There are 2d |P | unknowns in p^ia, and p^ib and 2d 2 unknowns in M1 and M2. Since there are only 2d |P | equations, which are less than the number of unknowns, the attacker does not have sufficient information to solve for the transformation matrices. Hence, Scheme 2 is resilient against this level-3 attack.
+5. EMPIRICAL EVALUATION
+In this section we present two sets of experiments we have conducted to evaluate: (i) the time taken by a level-2 attacker to break a DRE scheme; (ii) the overhead incurred in the three encryption schemes (DPT, Scheme 1 and Scheme 2) in secure kNN computation. All programs are implemented in C++. Experiments are performed on an Intel Core 2 Duo 2.66GHz computer with 2 GB RAM running Windows XP.
+5.1 Feasibility of signature linking attack on DRE
+We have shown that it is theoretically feasible for a level-2 attacker to break a DRE scheme using the signature linking attack. In this experiment, we study the effectiveness of the attack in two aspects: (i) the smallest size (denoted by ) of P that is required for the attack to be successful, and (ii) the execution time of a successful attack.
+First, we outline an algorithm to implement the signature linking attack. Given a set P = {x1, x2, ..., x|P |}  DB in a level-2 attacker's knowledge H, we want to find a unique ordered set Q  E(DB ) such that sig(Q) = sig(P ). (If more than one such Q with the matching signature are found, a signature collision occurs and the attacker cannot break the DRE scheme.) To find such a Q, we perform incremental binding in a depth-first manner. We start by picking up a y1  E(DB ) and bind it to x1. We denote this binding by Q = {y1, }. (The asterisk denotes that x's on the right are unbound yet.) We extend this binding by picking another y2  E(DB ) and bind it to x2, giving the binding Q = {y1, y2, }. This binding extension induces the constraint: d(y1, y2) = d(x1, x2). We check this constraint and if it is satisfied, we continue with the binding extension; otherwise, we backtrack and pick another y2 to be bound to x2. In general, extending a binding Q = {y1, . . . , yi, } to the binding Q = {y1, . . . , yi, yi+1, } induces i constraints: d(yj, yi+1) = d(xj, xi+1) (for 1  j  i). If any constraint is not satisfied, we rollback the extension and try another yi+1. When a complete binding Q = {y1, y2, . . . , y|P |} is found, Q gives a solution. Then, we continue the process by rolling backing the binding in search of another solution Q.
+To determine the size of P that is required to break a DRE scheme, we randomly generate a P of size 3. We execute the above binding procedure until one of the following cases happen: (1) if 2 solutions (i.e., 2 Q's) are found, we stop the binding process, extend the size of P by adding one more point to it and repeat the binding process; (2) if only 1 solution (a unique Q) is found, we stop. The size of P is taken as . Also, the time taken to find the solution Q given the final P set is taken as the time to attack the DRE scheme. In our experiment, the above exercise is repeated 10 times. We report the average value of the 's obtained in the 10 trials.
+We perform experiments on both synthetic and real datasets.
+
+146
+
+n
+
+time
+
+sigma
+
+71200
+
+10000 5.7969 20000 24.8811
+
+4.4 13.28771 2.535282 4.7 14.28771 4.636978
+
+630 30000 57.9205
+40 40000 102.145
+550 50000 181.365
+
+5 14.87267 5.856002 5 15.28771 6.674475 5.4 15.60964 7.502752
+
+ 46700
+380
+
+60000 70000 80000
+
+258.048 377.978 497.688
+
+5.6 15.87267 8.011496 5.9 16.09507 8.562158
+6 16.28771 8.959098
+
+129000
+
+90000 627.651 100000 791.316
+
+6.3 16.45764 9.293819 6.3 16.60964 9.62811
+
+1
+
+0 12
+
+0
+
+20
+
+10
+
+40
+
+60
+
+n (in thousands)
+
+2.141272
+80
+
+100
+
+Figure 2: Minimum size of P required for a successful attack () vs. n.
+
+lg (T (in s))
+
+n
+1102
+20
+143000
+50
+608
+70
+806
+90
+1004
+
+time
+
+sigma
+
+10000 5.7969
+
+4.4
+
+20000 24.8811
+
+4.7
+
+30000 57.9205
+
+5
+
+40000 102.145
+
+5
+
+50000 181.365
+
+5.4
+
+60000 258.048
+
+5.6
+
+70000 377.978
+
+5.9
+
+80000 497.688
+
+6
+
+90000 627.651
+
+6.3
+
+100000 791.316
+
+6.3
+
+13.28771 14.28771 14.87267 15.28771 15.60964 15.87267 16.09507 16.28771 16.45764 16.60964
+
+2.535282 4.636978 5.856002 6.674475 7.502752 8.011496 8.562158 8.959098 9.293819
+9.62811
+
+2.141272
+
+2
+
+13
+
+14
+
+15
+
+16
+
+17
+
+lg (n)
+
+Figure 3: Average execution time T of a successful attack vs. n.
+
+n
+DPT Scheme 1 Scheme 2
+
+20K
+0.0045 0.0064 1.4150
+
+40K
+0.0092 0.0131 2.8298
+
+60K
+0.0139 0.0208 4.2477
+
+80K
+0.0186 0.0266 5.7106
+
+100K
+0.0231 0.0331 7.5997
+
+Table 1: Average database encryption time (in s) vs. n under various schemes (d = 4).
+
+DPT Scheme 1 Scheme 2
+
+Execution time (in s) 0.0341 0.0456
+
+4.113
+
+Table 2: Encryption time (in s) of the Shuttle dataset under various schemes.
+
+E(DB ). To make the scheme secure, we set d = 80. For those synthetic datasets with d > 80, we pick d = d + 1. (We will further study the effect of d later.)
+5.2.1 Key generation
+For Scheme 1, the key is an O(d) × O(d) matrix. For Scheme 2, the key consists of an O(d ) × O(d ) matrix, an O(d ) vector and O(d ) random numbers. In our experiments, it take less than 1ms to generate the keys for d ranging from 2 to 100 under either scheme.
+
+5.2.2 Database Encryption
+
+Execution time (in s)
+
+A synthetic database consists of n uniformly distributed ran-
+
+dno76amndpodi)n.tsW56i00ne00
+
+a d-dimensional space (for various also use the dataset `Shuttle' from
+
+values of the UCI
+
+re5pository a4s00the real dataset [4]. The Shuttle dataset con-
+
+For each value of n and d, 100 synthetic databases are generated and the average amount of time taken by each scheme to encrypt the database is recorded. Table 1 shows the encryption time for various n with d = 4, while Figure
+
+ta4ins 58K p3o0i0nts and 9 dimensions.
+
+4 shows the encryption time for various d with n = 50K.
+
+3Figures 22a00nd 3 show the average value of  and the av-
+
+We also show the encryption time of the Shuttle dataset in
+
+er2age attack10t0ime in log scale under various values of n for
+
+Table 2.
+
+th1e synthetic 0databases.
+
+Tables 1 and 2 show that the encryption cost scales well
+
+0Figure 3 show0s a straig2h0t00l0ine with40a00s0lope of 620.01040. This 8000 against n under all three schemes. In particular, DPT and
+
+sug0gests that 2t0he execut4io0n time re6q0uirned by 8s0ignature 1li0n0king attack is of the ordenr (oinf tnho2.u1s4a,nwdsh)ich is polynomial time.
+
+Scheme 1 encrypt the databases in sub-seconds. Scheme 2 requires more time because the transformation matrices are
+
+The cost is thus affordable. For example, with n = 100K,
+
+much bigger (d = 80) than those of Scheme 1 (d = 4). Since
+
+an attack takes about 800 seconds. Moreover,  varies from
+
+we pick d = 80 unless d > 80, the database encryption time
+
+4.4 when n = 10K to 6.3 when n = 100K. The knowledge
+
+for Scheme 2 stays flat when d  80 (see Figure 4). Consid-
+
+required to attack is generally very small. For the Shuttle
+
+ering that database encryption generally has a less stringent
+
+dataset,  = 4.6 and the average attack time is 314 seconds.
+
+response time requirement compared with query processing,
+
+These numbers are similar to those obtained from the syn-
+
+the database encryption costs are relatively small.
+
+thetic dataset. The results show that DRE is easily break-
+
+We note that Scheme 2's database encryption cost is af-
+
+able. This strengthens the motivation in our exploration of
+
+fected by the choice of d . We thus repeat the experiment
+
+non-distance-recoverable encryption schemes.
+
+on Scheme 2 varying d in the range [56,100]. In this exper-
+
+5.2 Performance of encryption schemes
+In this section, we evaluate the overhead incurred by the encryption schemes. We compare their cost to that of executing kNN on plain data. We implemented the three encryption schemes: DPT, Scheme 1 and Scheme 2. We evaluate the performance of the schemes under 4 tasks: (i) key generation; (ii) database encryption; (iii) kNN computation and (iv) query encryption and result decryption. Again, synthetic datasets and the Shuttle dataset are used in the evaluation.
+With synthetic datasets, we conduct two experiments. In the first experiment, we vary n from 10K to 100K with a fixed d = 4. In the second experiment, we vary d from 2 to 100 with a fixed n = 50K. For Scheme 2, we need to pick the number of dimensions d of the transformed space
+
+Encryption time (in s)
+
+Data
+
+Gaussian
+
+Dimension
+
+4
+
+Size DPT
+
+DB6(in
+
+10 0.00203
+
+SScchheemmee532
+
+0.00312 0.70938
+
+4
+
+Data
+
+Gaussian
+
+Size DB3(in
+
+50
+
+Dimension
+
+2
+
+Scheme22 3.77171
+
+Scheme 1 0.01297
+DPT 1 0.00734
+
+20 0.00453
+0.0064 1.415
+3 3.84828 0.01422 0.00984
+
+30 0.00657
+0.01 2.12203
+4 3.53718 0.01656
+0.0114
+
+4S0cheme 250
+0.00922 0.01156
+0.0131S2che0m.0e19154
+2.8298D4PT 3.53718
+
+5 3.56296 0.01954 0.01329
+
+6 3.5675 0.02359 0.01593
+
+60 0.01391 0.02078 4.24765
+7 3.56234 0.02875 0.02062
+
+70 0.01625 0.02358 4.95843
+8 3.55952 0.03391 0.02469
+
+80 0.0186 0.02656 5.71062
+9 3.57391 0.03999 0.02891
+
+0
+
+0
+
+20
+
+40
+
+60
+
+80
+
+100
+
+d
+
+Figure 4: Average database encryption time (in s) vs. d under various schemes (n = 50K).
+
+147
+
+50
+
+60
+
+70
+
+80
+
+90
+
+100
+
+d'
+
+Size DB(in k Scheme 3 Scheme 2 Unencrypte
+
+50 1
+7.203 7.063
+
+Dimension
+
+5
+
+10
+
+7.188 7.125
+
+7.234 7.031
+
+4
+d 20
+7.188 7.078
+
+50
+7.203 7.125
+
+100
+7.297 7.094
+
+200
+7.454 7.219
+
+500
+7.782 7.516
+
+Encryption time (in s)
+
+6
+
+5
+
+4
+
+3
+
+2
+
+1
+
+0
+
+50
+
+60
+
+70
+
+80
+
+90
+
+100
+
+d'
+
+Query processing time (in ms)
+
+160 140 120 100
+80 60 40 20
+0
+0
+
+Scheme 2 Scheme 1 Unencrypted / DPT
+
+20
+
+40
+
+60
+
+80
+
+100
+
+n (in thousands)
+
+Figure 5: Average database encryption time (in s) vs. d under Scheme 2 (n = 50K; d = 4).
+
+Figure 6: Average query execution time vs. n (Synthetic data; k = 10; d = 4).
+
+Execution time (in ms)
+
+Unencrypted / DPT 11.25
+
+Scheme 1 10.52
+
+Scheme 2 74.48
+
+Table 3: Average query execution time (Shuttle dataset; k = 10).
+
+iment, n = 50K and d = 4. Pervious research has suggested that a search space of 256 (such as 56-bit DES) is generally considered not secure against brute-force search with today's computing power. Also, a commonly accepted standard is 80 bits as a low-end requirement of encryption key length. So, the range [56,100] for d is a reasonable one for our study. Figure 5 shows the results. From the figure, we see that encryption time is reasonably small within the range studied. For example, when d = 100, it takes about 6.0s to encrypt a 50K database.
+5.2.3 kNN computation
+In this experiment, we measure the execution time of kNN queries. We implement kNN search using a simple linear scan algorithm which uses a heap structure to maintain the k closest points to the query that the algorithm has seen so far during the execution. (We will discuss how faster kNN algorithms can be implemented using our encryption schemes in Section 6.) For each encryption scheme, we measure its average execution time over 1,000 random kNN queries. We compare their performance against the case in which kNN is executed on plain unencrypted data (called `unencrypted scheme' in the performance figures). Note that DPT preserves the distances between data points. Hence, the query execution time under DPT is the same as that under the unencrypted scheme. Figures 6 and 7 show the results for synthetic datasets. In the former, we vary n with d = 4 while in the latter, we vary d with n = 50K. In both cases k is 10 and d = 80 if d  80. Table 3 shows the results for the Shuttle dataset.
+Figure 6 shows that the cost of kNN computation scales linearly to the number of points in the database under all three encryption schemes. The reason why Scheme 2 is slower than the others is that the default number of dimension of the transformed space (d ) is 80 for Scheme 2, while it is only 4 for the other schemes. For this reason, we see from Figure 7 that the query execution time of Scheme 2 stays flat for 2  d  80. Also, we see that Scheme 1 is actually faster than the unencrypted scheme in processing queries. It is because we have pre-computed ||p|| for each point p in the
+
+Query processing time (in ms)
+
+Data
+
+Gaussian
+
+Dimension
+
+4
+
+Size DB(in Scheme 2
+
+14.5191240 0
+
+Scheme 1 Unencrypte
+
+0.81704 0
+0.828
+
+80
+
+Data
+
+Gaussian
+
+Size DB(in
+
+560 0
+
+Dimension
+
+42 0
+
+Scheme 2 81.219
+
+Scheme 1
+
+6.2128 0
+
+Unencrypte
+
+3.468
+0
+
+k 20 29.079 2.765 2.64
+k 3 76.876 6.687 6.891
+
+30 43.219
+4.297 4.218
+4 73.625
+7.234 7.031
+
+10
+
+4S0cheme 250
+
+60
+
+575..0716S75chem737e..6212354
+
+86.97 8.671
+
+5.67U2nencr7y.0p3te1d / DP8.T563
+
+10 5
+70.716 7.671 7.39
+
+6 73.298
+8.156 7.969
+
+7 74.889
+8.657 10.828
+
+70 97.202 10.109
+10
+
+80 108.529
+11.562 11.5
+
+8 79.627
+8.922 11.094
+
+9 78.281
+9.328 11.64
+
+Data
+
+Gaussian 0
+
+Size DB(in
+
+50
+
+20
+
+40
+
+60
+
+Dimension
+
+4
+
+80 100
+
+k
+
+1
+
+5
+
+10
+
+20d
+
+50
+
+100
+
+200
+
+500
+
+Scheme 3
+
+Scheme 2
+
+7.203
+
+7.188
+
+7.234
+
+7.188
+
+7.203
+
+7.297
+
+7.454
+
+7.782
+
+UneFncriygptue re 77.0:63Ave7r.1a25ge q7u.03e1ry e7x.0e78cuti7o.1n25 tim7e.09v4 s. d7.2(1S9 yn-7.516
+
+thetic data; k = 10; n = 50K).
+
+Query processing time (in ms)
+
+160
+
+Scheme 2
+
+databa1s4e0under ScheSmcheem1.e 1For each query q, Scheme 1 per-
+
+forms d1+201 multiplicaUtnieonncsryaptnedd /dDPaTdditions to compute p · q
+
+for eac1h0d0atabase point p. Under the unencrypted scheme,
+
+we comp8u0te d(p, q)2 for each database point p and a query
+
+point q.60This takes d multiplications, d subtractions and d
+
+- 1 addi4t0ions. So, when d is large, Scheme 1 is noticeably
+
+faster. 20
+
+Next, w0e vary d in the range [56,100] and measure query
+
+execution t0ime und2e0r Schem40e 2. In 6t0his exp8e0riment,10w0e set
+
+n = 50K, d = 4 and k n=(in10t.houFsigaundres)8 shows the result. We see that the execution time scales linearly with d . We
+
+can thus use a reasonably large d to provide good security
+
+protection without significantly degrading query processing
+
+time.
+
+5.2.4 Query encryption and result decryption
+
+transform
+
+n=50K
+
+Query processing time (in ms)
+
+d'
+
+56 tim11e0.709063
+
+60 64
+
+228..30020780434
+
+68 2.59515
+72 26.900625
+
+76 3.21641
+80 34.504781
+
+84 3.87984
+88 42.203687
+
+92 4.6414
+
+96 5.002407
+
+100 5.5395530
+
+d=4
+60
+
+d'
+
+time
+
+56 48.594
+
+60 48.234
+
+64 53.657
+
+68 56.282
+
+72 57.546
+
+76 58.796
+
+80
+
+64.47
+
+84 63.671
+
+88 66.124
+
+92 70.939
+
+96
+
+74.36
+
+70 10080 76.299 90
+
+d'
+
+100
+
+Figure 8: Average query execution time of Scheme 2 vs. d (Synthetic data; n = 50K; d = 4; k = 10)
+6
+
+ryption time (in s)
+
+5
+
+4
+
+148
+
+3
+
+2
+
+1
+
+For each query, player 2 needs to perform one encryption and k decryptions. In our experiments, it takes at most 1ms. The cost is negligible.
+5.3 Summary
+We have shown that signature linking attack only requires a small number of known points in P to break a DRE and the attack cost is not expensive. So, a level-2 attacker can easily compromise the security of a DRE scheme. This justifies the need of non-distance-recoverable encryption schemes for secure kNN computation. We evaluated the performance of the two proposed schemes. Scheme 1 has a very low cost and it resists level-2 attacks. We remark that targeting level-2 attacks in security protection is practical and Scheme 1 is suitable for this requirement. Relatively speaking, Scheme 2 has higher overheads due to the introduction of additional dimensions. We remark that the additional dimensions are a necessary evil if the primary goal of the scheme is to provide the best protection against attackers. Thus, there is a tradeoff between Scheme 2, which is resilient to level-3 attacks, and Scheme 1, which allows more efficient query processing.
+6. FAST KNN SEARCH
+So far, we have discussed kNN computation on encrypted data using a simple linear scan algorithm. Although we have shown that query processing is generally very fast in our experimental results, it is interesting to see how more advanced kNN algorithms can be employed under the SCONEDB model. Such techniques would be very useful particularly in applications where there is a massive amount of data and/or queries. In this section, we briefly discuss how the kNN problem in the original data space can be easily transformed into a top-k problem in the encrypted transformed space. This observation allows the service provider to apply any existing efficient top-k algorithm on the encrypted data to answer kNN queries very efficiently.
+In our encryption schemes, the EDBMS uses the distance comparison operator Ae to find the nearest point to a query point. Specifically, given two encrypted points p1 = ET (p1, K), p2 = ET (p2, K) and an encrypted query q = EQ(q, K), Ae compares p1 ·q and p2 ·q (see Scheme 1). If p1 ·q > p2 ·q then p1 is closer to q than p2 is. We can generalize this and observe that the k encrypted points pi's that give the largest type-2 scalar products pi · q are the k nearest neighbors of q. Hence, given q, the kNN query can be treated as a top-k query with the linear ranking function F : F (p ) = p · q for all p  E(DB ).
+The problem of top-k queries has been studied extensively in the literature [23, 22, 24]. For a linear ranking function, an efficient solution is to build a ranking cube that stores the top-k results [23]. While data cube suffers from the curse of dimensionality, a novel technique of `ranking fragments' is introduced to handle high-dimensional rank queries [23]. We remark that the choice of a "top-k" algorithm is orthogonal to our study (as long as the algorithm can handle linear ranking functions3). The service provider is thus free to choose an efficient implementation for fast kNN search. This decoupling of the search algorithm and our distance comparison operator allows much flexibility in the design of the SCONEDB model.
+3Indeed, most existing top-k algorithms such as [23, 22] satisfy this requirement.
+
+7. RELATED WORK
+The outsourced database (ODB) model was introduced in [12]. A data owner (DO) outsources its database hosting and query answering to a service provider (SP), who is not trusted. Security in ODB is studied, similarly to our SCONEDB model. The goal is to protect the data using encryption and allow query processing on the encrypted database. For example, an order-preserving encryption scheme (OPES) [2] applies an encryption function E to an ordinal domain, such that E(x) < E(y) for every pair of values for which x < y. OPES facilitates evaluation of range queries. In addition, an additive and multiplicative homomorphic encryption function E (i.e. E(x) + E(y) = E(x + y) and E(x)E(y) = E(xy)) is proposed in [11] to support aggregate queries on encrypted data. However, as shown in [19], the homomorphic scheme is not secure even at the lowest security level (level-1 in our model). In summary, in previous ODB models only simple numerical domains and SQL operations on them have been considered, while we target more sophisticated operations (i.e., kNN search). In addition, every study in ODB assumes one single type of attack, while SCONEDB considers different levels of attacks and it is being adapted to each of them.
+Apart from encryption techniques with special properties, there are other data protection methods that facilitate secure computation of queries. "Coarse" (a.k.a. bucket-based) indexes are introduced to facilitate execution of SQL statements in the ODB model [10]. The tuples are encrypted by common encryption schemes like RSA. The domain of each database attribute is divided into partitions. Each partition is assigned an ID by a hash function. DO sends to SP the encrypted tuples together with their partition ID to serve as the "coarse" index. The query is transformed to retrieve the partitions that contain the targeted tuples. SP returns a superset of the query result. The users, who own the key, decrypt the result and perform a post-processing to filter false positives. For advanced queries, the number of false positives can be huge, causing a heavy load at the users. For example, distances between database points to the query point are required in k-NN computation and cannot be easily captured by the partition IDs. Therefore, the direct application of this technique may cause the SP to return the entire database and let the user to compute the query result on his own. In addition, the bucket-based approach is not suitable when users have limited processing power, e.g. they use mobile devices.
+Another approach for protected query processing makes use of special hardware: the secure co-processor [18, 1]. This is a secure computation unit; no parties can observe the performed computations and the data stored in it. The use of the unit is straightforward; we install the encryption and decryption key and deploy the application logic directly at the co-processor. On the other hand, the device is much slower than usual processors. It is not suitable for sophisticated applications that demand heavy computations. In addition, the co-processor must be maintained by the users. For example, if the device is down, the user has to re-deploy the co-processor. This conflicts to the paradigm of cloud computing in which users purchase the services without maintaining the resources themselves.
+Various data anonymization models, like k-anonymity, have been proposed for privacy preserving data publishing [21, 14, 16]. The basic idea is to make the quasi-identifiers (sets of
+
+149
+
+attributes that can be linked with external data to uniquely identify an individual) of each tuple in the database indistinguishable from at least k - 1 other tuples (k is a user defined parameter). k-anonymity can be achieved by generalizing the quasi-identifiers (e.g., replacing exact attribute values by domain ranges), by suppressing tuples, or by perturbing them [3, 6]. Apart from the information loss incurred by this process (queries are no longer applied on the original data), the model itself suffers from certain drawbacks. For example, as pointed out in [16], the indistinguishable groups of anonymized quasi-identifiers should also contain a diverse set of sensitive values, while information leakage may also occur with the help of limited background knowledge by the attacker. In addition, the generalized ranges of values may give an adversary an accurate estimation on the original database or valuable statistics (e.g. the number of customers who have more than 10M in their accounts). Note that the goals of data privacy in publication and data security in ODB are not the same; data privacy strives to avoid the linkage of published data to specific individuals, while data security in ODB aims at the protection of the stored data against unauthorized database users.
+In this paper, we focus on kNN search as a case-study operation for the SCONEDB model. Distance-preserving transformation (DPT) is proposed in [20] as an encryption method for such queries. DPT transforms a given point x to N x + t where N is an orthogonal d × d matrix and t is a d-dimensional vector. The main feature of DPT is that distance between points is preserved in the transformation, i.e., d(x, y) = d(E(x), E(y)) where d is the Euclidean distance, E is the encryption/transformation function. Since distance is preserved, kNN queries can be computed correctly. However, the authors in [15] show that DPT is not secure w.r.t. level-2 and level-3 attacks. For a level-3 attack, we can observe a number of points {x1, x2, ..., nm} in DB and their corresponding encrypted values {y1, y2, ..., ym}. We can then set up a number of yi = N xi + t equations, forming a system of linear equations where there are d2 unknowns in N and d unknowns in t. So, if m  d + 1, the system is generally solvable. For a level-2 attack, an attacker observes a number of points P in DB . Since DPT preserves the correlations between dimensions, [15] uses PCA to identify the principle components in the set of points P and in the transformed database. By matching the principle components, the attacker can obtain an accurate estimation of N and t. Note that the attacks proposed in [15] do not overlap with our proposed attacks described in Section 2. [15] discusses how to attack DPT specifically and the proposed attacks are not applicable to general DRE, which is vulnerable to attacks shown in Section 2. Though the safety level of DPT is not high, we remark that DPT is useful in situations where only level-1 attacks are concerned.
+kNN computation at an untrusted platform is also considered in location-based service (LBS) systems [8, 17, 9, 13]. In LBS models, a server holds a set of tuples namely points of interest (POI). Users submits queries (range query or kNN queries) to the server and retrieves the desired POIs. The main security goal is to protect the location of the query issuers, while some models also consider the privacy of POI [8, 17]. The main model used is k-anonymity; the goal is to convert the location of the query into a spatial range, such that at least k - 1 other locations are included in that range and the service provider cannot distinguish the user in a set
+
+of k candidates. Although such a model can be used for our problem, it has certain drawbacks. First, the anonymized database reveals approximately the original values which is not desired in our model. Second, in certain models [9], the database is assumed to be owned by the server and hence the server can observe the original database. Third, in such systems (as in bucket-based indexes), the server usually returns a superset of the query result, which then has to be post-processed by the user. This requires additional effort at the user's side which may be considerable for light-weight clients. An LBS model that performs encryption for the purpose of kNN search is proposed in [13]. The main idea is to use a Hilbert curve to `encrypt' database points and the queries. The Hilbert value of the points are given to the server. kNN is then computed on the Hilbert transformed space to give an approximate result. Except from returning an approximate result, this method has a similar problem to DPT; the Hilbert curve can be considered as an advanced type of linear transformation which can be easily attacked as we discussed in Section 2.
+8. DISCUSSION AND CONCLUSION
+In this paper, we introduced the SCONEDB model, which captures the behavior of the users and the attacker on encrypted databases. Many existing techniques in database service outsourcing can be incorporated into SCONEDB, e.g., OPES for range queries; homomorphic encryptions for aggregate queries. All these schemes and our proposed schemes use different encryption strategies. However, they can be integrated on a single encrypted database. For example, in a bank database, we can encrypt account balances by OPES, encrypt branch locations by Scheme 1, and encrypt names and addresses by a strong encryption like RSA. Range and kNN queries can be performed on balances and locations independently. The possibility of integrating different schemes in the SCONEDB model to support a wide range of applications makes EDBMS a practical solution to service outsourcing. In the integrated solution, we need to ensure that the different schemes are aligned on the same security level.
+Emerging computing paradigms such as database service outsourcing and cloud computing call for the study of secure computation on encrypted data. In this work, we have made the following contributions: (1) We have formulated a general secure database model SCONEDB which is defined independent of the query type. The model incorporates the attacker capability as a distinct component and uses it to measure the security level of the encryption scheme. It also defines the notion of an encrypted database which can support secure computation such as secure kNN search on encrypted data. (2) We have defined distance-recoverable encryption which supports kNN computation and show that it is not secure. (3) We have developed a new asymmetric encryption function ASPE that preserves a special type of scalar product and use it to construct two secure encryption schemes that resist attackers of different levels and yet support secure and accurate kNN query computation. (4) We have carried out a performance evaluation of the proposed schemes. We remark that the SCONEDB model consolidates the requirements and goals in a single model which can integrate the previous work on database service outsourcing.
+A future research issue is the systematic study on different operators that can be supported on an encrypted database
+
+150
+
+w.r.t different security levels and goals. In the SCONEDB model, the capability of the attacker is specified by its background knowledge, which is intuitive. It is possible to extend the attack model to include other aspects, e.g., the amount of available computational power. Also, the security goal in SCONEDB is to prevent the attacker from breaking into the system and acquiring unauthorized data. There could be other security goals, like for example, the protection of the location privacy of query issuers [8, 17]. How to include security goal as another component into the SCONEDB model is a subject for future work.
+9. REFERENCES
+[1] R. Agrawal, D. Asonov, M. Kantarcioglu, and Y. Li. Sovereign joins. In ICDE, 2006.
+[2] R. Agrawal, J. Kiernan, R. Srikant, and Y. Xu. Order preserving encryption for numeric data. In SIGMOD, 2002.
+[3] R. Agrawal and R. Srikant. Privacy-preserving data mining. In SIGMOD, 2000.
+[4] A. Asuncion and D. Newman. UCI Machine Learning Repository, 2007.
+[5] H. Delfs and H. Knebl. Introduction to Cryptography: Principles and Applications. Springer, 2002.
+[6] A. Evfimievski, R. Srikant, R. Agrawal, and J. Gehrke. Privacy preserving mining of association rules. In KDD, 2002.
+[7] Gartner. Assessing the Security Risks of Cloud Computing (ID Number: G00157782), 2008.
+[8] B. Gedik and L. Liu. Location privacy in mobile systems: A personalized anonymization model. In ICDCS, 2005.
+[9] G. Ghinita, P. Kalnis, A. Khoshgozaran, C. Shahabi, and K. L. Tan. Private queries in location based services: Anonymizers are not necessary. In SIGMOD, 2008.
+[10] H. Hacigumus, B. Iyer, C. Li, and S. Mehrotra. Executing sql over encrypted data in the database-service-provider model. In SIGMOD, 2002.
+[11] H. Hacigumus, B. Iyer, and S. Mehrotra. Efficient execution of aggregation queries over encrypted relational databases. In DASFAA, 2004.
+[12] H. Hacigumus, S. Mehrotra, and B. Iyer. Providing database as a service. In ICDE, 2002.
+[13] A. Khoshgozaran and C. Shahabi. Blind evaluation of nearest neighbor queries using space transformation to preserve location privacy. In SSTD, 2007.
+[14] N. Li, T. Li, and S. Venkatasubramanian. t-closeness: Privacy beyond k-anonymity and l-diversity. In ICDE, 2007.
+[15] K. Liu, C. Giannella, and H. Kargupta. An attacker's view of distance preserving maps for privacy preserving data mining. In PKDD, 2006.
+[16] A. Machanavajjhala, J. Gehrke, D. Kifer, and M. Venkitasubramaniam. l-diversity: Privacy beyond k-anonymity. In ICDE, 2006.
+[17] M. F. Mokbel, C. Y. Chow, and W. G. Aref. The new casper: Query processing for location services without compromising privacy. In VLDB, 2006.
+[18] E. Mykletun and G. Tsudik. Incorporating a secure coprocessor in the database-as-a-service model. In IWIA, 2005.
+
+[19] E. Mykletun and G. Tsudik. Aggregation queries in the database-as-a-service model. In ESORICS, 2006.
+[20] S. R. M. Oliveira and O. R. Zaiane. Privacy preserving clustering by data transformation. In SBBD, Manaus, Amazonas, Brazil, 2003.
+[21] L. Sweeney. k-anonymity: A model for protecting privacy. In IJUFKS, 2002.
+[22] D. Xin, J. Han, and K. C.-C. Chang. Progressive and selective merge: computing top-k with ad-hoc ranking functions. In SIGMOD, 2007.
+[23] D. Xin, J. Han, H. Cheng, and X. Li. Answering topk queries with multidimensional selections: The ranking cube approach. In VLDB, 2006.
+[24] L. Zou and L. Chen. Dominant graph: An efficient indexing structure to answer top-k queries. In ICDE, 2008.
+
+APPENDIX
+A. PROOF OF UNIQUENESS OF INTERSECTION OF HYPERSPHERES
+
+Lemma 1. Given d + 1 hyperspheres in d-dimensional space that have common intersections. Let gi and µi be the center and radius of the i-th hypersphere. If the d vectors gj - g1 for j = 2 to d + 1 are linearly independent, the common intersection of the d + 1 hyperspheres is exactly a point.
+
+Proof. Let x be the intersection of the hyperspheres.
+
+We want to show that there is a unique solution to x. Since
+
+x lies on the d + 1 hyperspheres, we have d + 1 equations: ||gi - x|| = µi  ||x||2 - 2gi · x = µ2i - ||gi||2 for i = 1 to d + 1. We can eliminate the term ||x||2 by subtracting
+
+the equations by the first equation. We have d equations:
+
+(g1 - gj ) · x
+
+=
+
+1 2
+
+(µj2
+
+-
+
+µ12
+
++
+
+||g1||2
+
+-
+
+||gj ||2)
+
+for
+
+j
+
+=
+
+2
+
+to
+
+d + 1. Note that RHS of each equation is a constant and the
+
+d equations form a system of linear equations. If the vectors
+
+gj - g1 are linearly independent, there is a unique solution
+
+to the system of linear equations.
+
+B. ANALYSIS OF SIGNATURE LINKING ATTACK IN ATTACKING DRE
+
+Lemma 2. Assume a DRE E is used to encrypt DB to get
+
+E(DB ). With a level-2 attack in which H = E(DB ), P ,
+
+
+
+>
+
+0,
+
+if
+
+|P |
+
+
+
+d+1+
+
+ln ln
+
+,
+
+Pr(signature
+
+collision)
+
+<
+
+where  denotes the probability of a point being present in
+
+DB .
+
+Proof. The probability of signature collision is the same as the probability of having a set of Q in E(DB ) that matches the signature generated by an arbitrary set of points P (so P is independent to E(DB )). Let Pi  P (Qi  Q resp.) denotes the set of first i points in P (Q resp.). Let ei be the event that the signature generated by Pi collides with the signature generated a randomly picked Qi. We have P r(ei) = P r(ei-1)P r(ei|ei-1). In the base case i = 1, sig(P1) = . Any Q1 gives the same signature. So, P r(e1) = 1. Next, we evaluate the value of P r(ei|ei-1). Let xi be the i-th point in P and yi be the i-th point in Q. With one more point included in Pi, sig(Pi) has i - 1 more values (the pairwise distance from xi to each of the
+
+151
+
+first i - 1 points in P )) than sig(Pi-1). P r(ei|ei-1) depends
+
+on the probability of Qi having the same i - 1 values in the
+
+signature. These i - 1 values depends on the value of yi.
+
+When i  d + 2, there are other d + 1 points in Qi and
+
+the distances from these points to yi is given in sig(P ). We
+
+can establish d + 1 equations of hyperspheres and yi lies on
+
+the intersection of the hyperspheres. Since there are d + 1
+
+hyperspheres, there is only 1 possible solution of yi (or no
+
+solution if the intersection falls outside the possible values
+
+domain). Each point in the domain has a probability of 
+
+to be present in DB . So, P r(ei|ei-1)   for i  d + 2.
+
+When i < d + 2, we can also establish i - 1 equations of
+
+hyperspheres but the solution to yi is not unique in general.
+
+Assume the domain on each dimension is J and J is discrete.
+
+We can pick d + 1 - i dimensions in yi and try all possible values for these dimensions (|J|d+1-i cases). In each case,
+
+there are i - 1 variables remained in the equations and the
+
+dimension of the hyperspheres reduces to i - 1. Given i - 1
+
+equations in (i-1)-dimensional domain, it gives 2 possible
+
+values of yi (because the equations are quadratic). In summary, there are at most  = 2|J|d-i possible solutions to
+yi if i < d + 2. This gives P r(ei|ei-1)  1 - (1 - ) for
+
+i < d+2. Hence, we can compute an upper bound for P r(ei)
+
+for any i by ji=2P r(ej |ej-1).
+
+When
+
+|P |
+
+
+
+d+
+
+1+
+
+ln ln
+
+,
+
+P r(e|P |)  |P |-d-1jd=+211 - (1 - )
+
+ln
+  ln
+
+=
+
+Theorem 7. Assume a DRE E is used to encrypt DB to
+
+get E(DB ). With a level-2 attack in which H = E(DB ), P ,
+
+
+
+>
+
+0,
+
+if
+
+|P |
+
+
+
+d
+
++
+
+1
+
++
+
+ln ln
+
+,
+
+Pr(DB A
+
+=
+
+DB )
+
+>
+
+1
+
+-
+
+where
+
+ denotes the probability of a point being present in DB .
+
+Proof. Followed from Lemma 2, the attacker can iden-
+
+tify a unique I with probability 1 - . So, he obtains the
+
+necessary knowledge for a level-3 attack. Next, he can ex-
+
+ecute the attack as shown in the proof of Theorem 1 and
+
+recover DB A = DB .
+
+In order to achieve a small signature collision probability
+
+, the number of points required in P in the attack should
+
+be
+
+at
+
+least
+
+d
+
++
+
+1
+
++
+
+ln ln
+
+.
+
+As the points in the database are
+
+usually sparse, especially when the dimension is high, we
+
+expect a low probability of having a particular point present
+
+in the database.
+
+So |ln| is large.
+
+Hence
+
+ln ln
+
+is small and
+
+the number of points required to attack is practically small.
+
+So, if the attacker can find the distances between database
+
+points, the scheme cannot be secure at level-2 attacks.
+
+C. PROOF OF THEOREM 5
+
+Proof. If an encryption E is distance-recoverable, i.e., E is DRE, there exists a computational procedure f such that for all database points p1, p2 and any encryption key K such that f (E(p1, K), E(p2, K)) = d(p1, p2). To prove ET in Scheme 1 is not distance-recoverable, we show that such f does not exist. Given any two different database points p1, p2 and any encryption key M (a (d + 1) × (d + 1) invertible matrix), we will show later that we can construct two points x and y and an encryption key M2 such that
+(i) a1 = ET (p1, M1) = ET (x, M2); and
+(ii) a2 = ET (p2, M1) = ET (y, M2); and
+(iii) d(p1, p2) = d(x, y).
+If E is DRE, we have
+
+f (a1, a2) = f (E(p1, K1), E(p2, K1)) = d(p1, p2) and
+
+f (a1, a2) = f (E(x, K2), E(y, K2)) = d(x, y)
+
+It leads to a contradiction since d(p1, p2) = d(x, y). ET in
+
+Scheme 1 is not distance-recoverable. In the following, we
+
+describe how to construct x, y and M2 that satisfies the
+
+above three conditions for any p1, p2, M1 that p1 = p2.
+
+Given two d-dimensional points p1, p2 and a (d + 1) ×
+
+(d + 1) invertible matrix M . The encrypted value of p1
+
+(p2 resp.) is a1 = ET (p1, M1) (a2 = ET (p2, M1) resp.).
+
+We construct x = mp1 and y = mp2 where |m| = 0, 1.
+
+So d(x, y) = d(p1, p2). Condition (iii) is satisfied. Next,
+
+we construct M2 =
+
+1 m
+
+Id
+
+0
+
+0
+
+1 m2
+
+M1 where Id is a d × d
+
+identity matrix. Note that M2 must be invertible because
+
+det(M2) =
+
+1 md+2
+
+= 0.
+
+We can use ET
+
+to encrypt x and y
+
+using M2. ET (x, M2) = M2T (x, -0.5||x||2)T
+
+= M1T
+
+1 m
+
+Id
+
+0
+
+0
+
+1 m2
+
+(mp1, -0.5m2||p1||2)T
+
+= M1T (p1, -0.5||p1||2)
+
+= ET (p1, M1) = a1
+
+Similarly, we have ET (y, M2) = a2. Condition (i) and (ii) are satisfied. All the three conditions are satisfied.
+
+152
+
+

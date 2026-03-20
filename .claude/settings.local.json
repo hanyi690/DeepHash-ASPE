@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__filesystem__list_allowed_directories",
+      "mcp__filesystem__list_directory",
+      "mcp__filesystem__directory_tree",
+      "Bash(dir:*)",
+      "Bash(pdftotext:*)",
+      "mcp__filesystem__get_file_info",
+      "mcp__zread__get_repo_structure",
+      "mcp__zread__read_file",
+      "mcp__web-search-prime__webSearchPrime",
+      "WebFetch(domain:blog.csdn.net)",
+      "Bash(find:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "mcp__filesystem__read_text_file",
+      "mcp__langchain-docs__brave_web_search",
+      "Bash(xcopy:*)",
+      "Bash(robocopy:*)",
+      "WebFetch(domain:ghraw.jituan.cloud)",
+      "Bash(python:*)",
+      "Bash(set:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)"
+    ]
+  },
+  "skipWebFetchPreflight": true
+}
