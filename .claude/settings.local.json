@@ -29,7 +29,9 @@
       "Bash(cd:*)",
       "Bash(curl:*)",
       "WebSearch",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(git merge:*)",
+      "Bash(git stash:*)"
     ]
   },
   "skipWebFetchPreflight": true
