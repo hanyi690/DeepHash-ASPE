@@ -5,6 +5,7 @@ torchvision>=0.11.0
 # Cryptographic and Matrix Operations
 numpy>=1.21.0
 scipy>=1.7.0
+h5py>=3.0.0  # For .mat file loading (HDF5 format)
 
 # Machine Learning
 scikit-learn>=0.24.0

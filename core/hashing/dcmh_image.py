@@ -1,7 +1,7 @@
 """
 DCMH 图像模块
 
-基于 AlexNet 风格的 CNN 架构，用于图像哈希编码。
+基于 VGG-F 模型的 CNN 架构，用于图像哈希编码。
 """
 
 import torch
@@ -13,20 +13,10 @@ class DCMHImageModule(DCMHBasicModule):
     """
     DCMH 图像编码模块。
 
-    使用 AlexNet 风格的 CNN 架构：
+    使用 VGG-F 风格的 CNN 架构（从 Caffe 转换）：
     - 5 个卷积层
     - 2 个全卷积层
     - 1 个线性分类器输出哈希码
-
-    架构细节：
-    1. conv1: Conv2d(3, 64, kernel_size=11, stride=4) + ReLU + LocalResponseNorm + MaxPool
-    2. conv2: Conv2d(64, 256, kernel_size=5, padding=2) + ReLU + LocalResponseNorm + MaxPool
-    3. conv3: Conv2d(256, 256, kernel_size=3, padding=1) + ReLU
-    4. conv4: Conv2d(256, 256, kernel_size=3, padding=1) + ReLU
-    5. conv5: Conv2d(256, 256, kernel_size=3, padding=1) + ReLU + MaxPool
-    6. full_conv6: Conv2d(256, 4096, kernel_size=6) + ReLU
-    7. full_conv7: Conv2d(4096, 4096, kernel_size=1) + ReLU
-    8. classifier: Linear(4096, bit)
     """
 
     def __init__(self, bit, pretrain_model=None):
@@ -35,57 +25,57 @@ class DCMHImageModule(DCMHBasicModule):
 
         参数：
             bit: 哈希码位数
-            pretrain_model: 可选的预训练模型路径
+            pretrain_model: 可选的预训练模型路径 (.mat 格式)
         """
         super(DCMHImageModule, self).__init__()
         self.module_name = "dcmh_image_model"
 
-        # CNN 特征提取器
         self.features = nn.Sequential(
-            # conv1
+            # 0 conv1
             nn.Conv2d(in_channels=3, out_channels=64, kernel_size=11, stride=4),
+            # 1 relu1
             nn.ReLU(inplace=True),
+            # 2 norm1
             nn.LocalResponseNorm(size=2, k=2),
+            # 3 pool1
             nn.ZeroPad2d((0, 1, 0, 1)),
             nn.MaxPool2d(kernel_size=(3, 3), stride=2),
-
-            # conv2
+            # 4 conv2
             nn.Conv2d(in_channels=64, out_channels=256, kernel_size=5, stride=1, padding=2),
+            # 5 relu2
             nn.ReLU(inplace=True),
+            # 6 norm2
             nn.LocalResponseNorm(size=2, k=2),
+            # 7 pool2
             nn.MaxPool2d(kernel_size=(3, 3), stride=2),
-
-            # conv3
+            # 8 conv3
             nn.Conv2d(in_channels=256, out_channels=256, kernel_size=3, stride=1, padding=1),
+            # 9 relu3
             nn.ReLU(inplace=True),
-
-            # conv4
+            # 10 conv4
             nn.Conv2d(in_channels=256, out_channels=256, kernel_size=3, stride=1, padding=1),
+            # 11 relu4
             nn.ReLU(inplace=True),
-
-            # conv5
+            # 12 conv5
             nn.Conv2d(in_channels=256, out_channels=256, kernel_size=3, stride=1, padding=1),
+            # 13 relu5
             nn.ReLU(inplace=True),
+            # 14 pool5
             nn.MaxPool2d(kernel_size=(3, 3), stride=(2, 2), padding=(0, 0)),
-
-            # full_conv6
+            # 15 full_conv6
             nn.Conv2d(in_channels=256, out_channels=4096, kernel_size=6),
+            # 16 relu6
             nn.ReLU(inplace=True),
-
-            # full_conv7
+            # 17 full_conv7
             nn.Conv2d(in_channels=4096, out_channels=4096, kernel_size=1),
+            # 18 relu7
             nn.ReLU(inplace=True),
         )
-
-        # 分类器输出哈希码
+        # fc8
         self.classifier = nn.Linear(in_features=4096, out_features=bit)
         self.classifier.weight.data = torch.randn(bit, 4096) * 0.01
         self.classifier.bias.data = torch.randn(bit) * 0.01
-
-        # 图像归一化均值
         self.mean = torch.zeros(3, 224, 224)
-
-        # 加载预训练模型
         if pretrain_model:
             self._init(pretrain_model)
 
@@ -94,24 +84,17 @@ class DCMHImageModule(DCMHBasicModule):
         从预训练数据初始化权重。
 
         参数：
-            data: 预训练模型数据字典
+            data: 预训练模型数据字典（从 imagenet-vgg-f.mat 加载）
         """
         weights = data['layers'][0]
-        self.mean = torch.from_numpy(
-            data['normalization'][0][0][0].transpose()
-        ).type(torch.float)
-
+        self.mean = torch.from_numpy(data['normalization'][0][0][0].transpose()).type(torch.float)
         for k, v in self.features.named_children():
             k = int(k)
             if isinstance(v, nn.Conv2d):
                 if k > 1:
                     k -= 1
-                v.weight.data = torch.from_numpy(
-                    weights[k][0][0][0][0][0].transpose()
-                )
-                v.bias.data = torch.from_numpy(
-                    weights[k][0][0][0][0][1].reshape(-1)
-                )
+                v.weight.data = torch.from_numpy(weights[k][0][0][0][0][0].transpose())
+                v.bias.data = torch.from_numpy(weights[k][0][0][0][0][1].reshape(-1))
 
     def forward(self, x):
         """
@@ -123,33 +106,34 @@ class DCMHImageModule(DCMHBasicModule):
         返回：
             哈希码张量 [batch, bit]
         """
-        # 减去均值进行归一化
         if x.is_cuda:
             x = x - self.mean.cuda()
         else:
             x = x - self.mean
-
-        # 特征提取
         x = self.features(x)
         x = x.squeeze()
-
-        # 输出哈希码
         x = self.classifier(x)
         return x
 
 
-def build_dcmh_image_model(bit, pretrain_model=None):
+def build_dcmh_image_model(bit, pretrain_model_path=None):
     """
     构建 DCMH 图像模型。
 
     参数：
         bit: 哈希码位数
-        pretrain_model: 可选的预训练模型路径
+        pretrain_model_path: 可选的预训练模型路径
 
     返回：
         DCMHImageModule 实例
     """
-    return DCMHImageModule(bit=bit, pretrain_model=pretrain_model)
+    import scipy.io as scio
+
+    pretrain_data = None
+    if pretrain_model_path:
+        pretrain_data = scio.loadmat(pretrain_model_path)
+
+    return DCMHImageModule(bit=bit, pretrain_model=pretrain_data)
 
 
 if __name__ == "__main__":
