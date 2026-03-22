@@ -304,99 +304,113 @@ python experiments/run_flickr25k.py \
 
 ```
 DeepHash-ASPE/
-├── config/              # 配置文件
-│   ├── model_config.py          # 模型配置（包含 DCMH_CONFIG）
-│   ├── aspe_config.py           # ASPE 加密配置
-│   ├── train_config.py          # 训练参数配置
-│   ├── coco_config.py           # MS-COCO 数据集配置
-│   └── dataset_config.py        # 数据集配置（Flickr25K, NUS-WIDE 等）
-├── core/
-│   ├── aspe/           # ASPE 加密方案
-│   │   ├── scheme1.py           # 基础 2 级安全方案
-│   │   ├── scheme2.py           # 增强 3 级安全方案
-│   │   ├── keygen.py            # 密钥生成
-│   │   └── dcmh_wrapper.py      # DCMH 集成包装器
-│   ├── hashing/        # 深度哈希模型
-│   │   ├── dcmh_basic.py        # DCMH 基础模块
-│   │   ├── dcmh_image.py        # DCMH 图像编码模块
-│   │   ├── dcmh_text.py         # DCMH 文本编码模块
-│   │   ├── dcmh_model.py        # DCMH 双流模型
-│   │   ├── image_hash.py        # 基于 CNN 的图像模型（备选）
-│   │   ├── text_hash.py         # 基于 NLP 的文本模型（备选）
-│   │   └── dual_stream.py       # 双流模型（旧版，保留兼容）
-│   ├── cirtorch/       # CNN 图像检索模块 (新增)
+├── config/                 # 配置文件
+│   ├── __init__.py
+│   ├── model_config.py     # 模型配置（DCMH、CNN）
+│   ├── aspe_config.py      # ASPE 加密配置
+│   ├── train_config.py     # 训练参数配置
+│   ├── dataset_config.py   # 数据集配置（Flickr25K, NUS-WIDE 等）
+│   ├── eval_config.py      # 评估配置
+│   └── dcmh_config.py      # DCMH 专用配置
+│
+├── core/                   # 核心库
+│   ├── aspe/               # ASPE 加密方案
 │   │   ├── __init__.py
-│   │   ├── layers/              #  pooling, normalization, loss
-│   │   │   ├── __init__.py
-│   │   │   ├── pooling.py       # MAC, SPoC, GeM, RMAC
-│   │   │   ├── functional.py
-│   │   │   ├── normalization.py
-│   │   │   └── loss.py
-│   │   ├── networks/            # ImageRetrievalNet
-│   │   │   ├── __init__.py
-│   │   │   └── imageretrievalnet.py
-│   │   ├── datasets/            # 数据加载器
-│   │   │   ├── __init__.py
-│   │   │   ├── datahelpers.py
-│   │   │   ├── genericdataset.py
-│   │   │   ├── traindataset.py
-│   │   │   └── testdataset.py
-│   │   └── utils/               # 评估、whitening、下载
-│   │       ├── __init__.py
-│   │       ├── download.py
-│   │       ├── download_win.py
-│   │       ├── evaluate.py
-│   │       ├── general.py
-│   │       └── whiten.py
-│   └── retrieval/      # 隐私保护检索 + CNN 检索
-│       ├── __init__.py
-│       ├── cir_service.py       # CNN 图像检索服务 (新增)
-│       ├── feature_extractor.py # 特征提取器 (新增)
-│       ├── pipeline.py
-│       └── secure_retrieval.py
-├── reference/
-│   ├── DCMH/                    # DCMH 参考实现
+│   │   ├── scheme1.py      # 基础 2 级安全方案
+│   │   ├── scheme2.py      # 增强 3 级安全方案
+│   │   ├── keygen.py       # 密钥生成
+│   │   ├── dcmh_wrapper.py # DCMH 集成包装器
+│   │   └── cnn_wrapper.py  # CNN 集成包装器
+│   │
+│   ├── hashing/            # 深度哈希模型
+│   │   ├── __init__.py
+│   │   ├── dcmh_image.py   # DCMH 图像编码器 (AlexNet CNN)
+│   │   ├── dcmh_text.py    # DCMH 文本编码器 (卷积标签处理)
+│   │   ├── dcmh_model.py   # DCMH 双流模型
+│   │   └── dcmh_basic.py   # DCMH 基础模块
+│   │
+│   ├── cirtorch/           # CNN 图像检索 (复制自 reference)
+│   │   ├── layers/         # pooling, normalization, loss
+│   │   ├── networks/       # ImageRetrievalNet
+│   │   ├── datasets/       # 数据加载器
+│   │   ├── utils/          # 评估、whitening、下载
+│   │   ├── api/            # FastAPI 端点
+│   │   └── services/       # 服务层 (SkNN 检索)
+│   │
+│   └── retrieval/          # 检索工具
+│       └── dcmh_metrics.py # DCMH 评估指标
+│
+├── reference/              # 参考实现（只读）
+│   ├── DCMH/                       # DCMH 原始代码
 │   └── cnnimageretrieval-pytorch-master2/  # cirtorch 原始代码
-├── data/               # 数据加载和预处理
-│   ├── nuswide_downloader.py
-│   └── dataset_config.py
-├── training/           # 训练流程
-│   ├── trainer.py               # 训练器
-│   ├── loss.py                  # 通用损失函数
-│   ├── dcmh_loss.py             # DCMH 特定损失函数
-│   └── scheduler.py             # 学习率调度器
-├── evaluation/         # 评估指标和基准测试
-│   └── evaluate_flickr25k.py
-├── backend/            # FastAPI 后端 (新增)
+│
+├── training/               # 训练流程
+│   ├── __init__.py
+│   ├── trainer.py          # 通用训练器
+│   ├── dcmh_loss.py        # DCMH 专用损失函数
+│   ├── scheduler.py        # 学习率调度器
+│   └── train_flickr25k.py  # Flickr25K 训练脚本
+│
+├── evaluation/             # 评估工具
+│   ├── __init__.py
+│   ├── metrics.py          # 通用评估指标
+│   ├── security.py         # 安全属性评估
+│   ├── benchmark.py        # 性能基准测试
+│   ├── evaluate_flickr25k.py   # Flickr25K 评估
+│   └── quick_eval_dcmh_aspe.py # DCMH+ASPE 快速评估
+│
+├── experiments/            # 完整实验脚本
+│   ├── __init__.py
+│   └── run_flickr25k.py    # Flickr25K 完整实验
+│
+├── examples/               # 示例脚本
+│   ├── __init__.py
+│   ├── dcmh_aspe_demo.py   # DCMH+ASPE 集成演示
+│   ├── build_encrypted_db.py # 构建加密数据库
+│   ├── text_to_image.py    # 文本→图像检索示例
+│   └── image_to_text.py    # 图像→文本检索示例
+│
+├── tests/                  # 单元测试
+│   ├── __init__.py
+│   ├── test_aspe_dcmh.py       # ASPE+DCMH 集成测试
+│   ├── test_cnn_aspe.py        # CNN+ASPE 集成测试
+│   └── test_dataset_downloader.py # 数据集下载测试
+│
+├── backend/                # FastAPI 后端
 │   ├── app/
 │   │   ├── main.py
-│   │   ├── routers/
-│   │   │   ├── images.py
-│   │   │   ├── texts.py
-│   │   │   ├── hash_codes.py
-│   │   │   ├── encrypt.py
-│   │   │   ├── search.py
-│   │   │   ├── metrics.py
-│   │   │   └── cir_retrieval.py  # CNN 检索 API
-│   │   └── services/
-│   │       ├── dcmh_service.py
-│   │       ├── aspe_service.py
-│   │       ├── coco_service.py
-│   │       └── cir_service.py    # CNN 检索服务
-├── frontend/           # Next.js 14 前端 (新增)
+│   │   ├── routers/        # API 路由
+│   │   └── services/       # 业务服务
+│   └── start_backend.py
+│
+├── frontend/               # Next.js 14 前端
 │   ├── src/
-│   │   ├── app/
-│   │   └── components/
-├── utils/              # 工具函数
-├── examples/           # 示例脚本
-│   ├── dcmh_aspe_demo.py        # DCMH + ASPE 集成演示
-│   └── run_flickr25k.py         # Flickr25K 实验脚本
-├── experiments/        # 实验脚本和报告
-├── tests/              # 单元测试
-│   └── test_aspe_dcmh.py        # DCMH 集成测试
-├── checkpoints/        # 模型检查点
-└── results/            # 评估结果
+│   ├── public/
+│   └── package.json
+│
+├── data/                   # 数据集
+│   ├── FLICKR-25K.mat      # Flickr25K 数据集
+│   └── imagenet-vgg-f.mat  # CNN 预训练模型
+│
+├── checkpoints/            # 模型检查点
+├── results/                # 评估结果
+├── utils/                  # 通用工具
+│   ├── __init__.py
+│   ├── crypto.py           # 加密工具
+│   └── matrix.py           # 矩阵运算工具
+│
+├── run_flickr25k_experiment.bat/sh  # 快捷实验脚本
+├── download_datasets.bat/sh         # 快捷下载脚本
+├── start_all.bat/sh                 # 启动所有服务
+└── README.md
 ```
+
+> **注**：项目已于 2026-03-22 完成重构，删除了以下冗余文件：
+> - 旧版哈希模型：`image_hash.py`, `text_hash.py`, `dual_stream.py`
+> - 旧版检索模块：`cir_service.py`, `feature_extractor.py`, `pipeline.py`, `secure_retrieval.py`
+> - 重复脚本：`quick_download.py`, `quick_flickr25k.py`, `run_flickr25k.py`
+> - 冗余测试：`test_dcmh_full.py`, `test_dcmh_aspe_comprehensive.py`
+> - 重复损失函数：`training/loss.py`
 
 ## 安装
 
@@ -556,58 +570,44 @@ print(f"二进制图像哈希唯一值：{torch.unique(binary_img)}")
 
 ## 快速开始
 
-### 1. 在 MS-COCO 上训练
+### 1. 训练 DCMH 模型（Flickr25K）
 
-```python
-from examples import train_on_coco
+```bash
+# 使用脚本（Windows）
+run_flickr25k_experiment.bat
 
-# 首先更新 config/coco_config.py 中的路径
-train_on_coco.main()
+# 使用脚本（Linux/Mac）
+./run_flickr25k_experiment.sh
+
+# 或直接使用 Python
+python training/train_flickr25k.py --data data/FLICKR-25K.mat --bit 64 --epochs 100
 ```
 
-### 2. 构建加密数据库
+### 2. 运行完整实验
 
-```python
-from examples import build_encrypted_db
-
-build_encrypted_db.main()
+```bash
+# 完整训练 + 评估 + 可视化
+python experiments/run_flickr25k.py --bit 64 --epochs 500
 ```
 
-### 3. 执行检索
+### 3. 快速评估 DCMH+ASPE
 
-```python
-from examples import text_to_image, image_to_text
+```bash
+python evaluation/quick_eval_dcmh_aspe.py --mode quick --bit 64
+```
 
-# 文本 → 图像检索
-text_to_image.main()
+### 4. 查看演示示例
 
-# 图像 → 文本检索
-image_to_text.main()
+```bash
+# DCMH+ASPE 集成演示
+python examples/dcmh_aspe_demo.py
+
+# CNN+ASPE 测试
+python tests/test_cnn_aspe.py
 ```
 
 ## 使用示例
 
-### 基础检索流程
-
-```python
-import torch
-from core.hashing.dual_stream import DualStreamHashModel
-from core.retrieval.pipeline import RetrievalPipeline
-
-# 加载模型
-model = DualStreamHashModel(vocab_size=10000, feature_dim=4096)
-
-# 创建检索流程
-pipeline = RetrievalPipeline(model, aspe_scheme='scheme1')
-
-# 准备数据库
-pipeline.prepare_database(images=image_list, texts=text_list)
-
-# 执行检索
-results = pipeline.text_to_image(query_text, k=10)
-for result in results:
-    print(f"得分: {result['score']}, 元数据: {result['metadata']}")
-```
 
 ### 直接使用 ASPE
 
@@ -694,21 +694,15 @@ hamm = 0.5×(bit - p·q) = 0.25×bit - 0.5×cipher_ip
 - `DCMHImageModule`：AlexNet 风格的 CNN 图像编码器
 - `DCMHTextModule`：基于卷积的文本标签编码器
 - `DCMHModel`：统一的双流哈希模型
-- `DCMHWithQuantization`：带量化训练的 DCMH 模型
-
-#### 旧版模型（保留兼容）
-- `ImageHashModel`：基于 CNN 的图像编码器（ResNet50/VGG16）
-- `TextHashModel`：基于 NLP 的文本编码器（Transformer/LSTM）
-- `DualStreamHashModel`：用于公共嵌入空间的统一模型
 
 ### ASPE 加密
 - `ASPEScheme1`：基础 2 级安全（抵抗已知样本攻击）
 - `ASPEScheme2`：增强 3 级安全（抵抗已知明文攻击）
 - `ASPEForDCMH`：DCMH 专用包装器（支持 {-1, +1} 哈希码）
+- `ASPEForCNN`：CNN 专用包装器（支持 SkNN 加密）
 
 ### 检索
 - `SecureRetrievalEngine`：隐私保护相似度搜索
-- `RetrievalPipeline`：端到端检索流程
 
 ### 损失函数
 - `DCMHCombinedLoss`：DCMH 组合损失（跨模态 + 量化）
@@ -757,12 +751,6 @@ download_datasets.bat
 
 # Linux/Mac
 ./download_datasets.sh
-
-# 或直接使用 Python
-python quick_download.py flickr25k
-python quick_download.py iapr_tc12
-python quick_download.py nuswide
-python quick_download.py all
 ```
 
 **方法 2：手动下载**
@@ -801,22 +789,6 @@ if exists:
     print(f"数据集已就绪：{path}")
 else:
     print(f"需要下载数据集：{path}")
-```
-
-#### 数据处理
-
-使用 `data/nuswide_downloader.py` 处理 NUS-WIDE 数据集：
-
-```python
-from data.nuswide_downloader import NUSWideProcessor
-
-processor = NUSWideProcessor('./data/nuswide')
-
-# 加载 GroundTruth 标签
-labels = processor.load_groundtruth_labels()
-
-# 创建 .mat 文件
-mat_path = processor.create_mat_file()
 ```
 
 ### MS-COCO 2014（备选）
