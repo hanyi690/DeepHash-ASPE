@@ -2,6 +2,116 @@
 
 一个结合了深度学习哈希与非对称标量积保持加密（ASPE）的隐私保护图文检索系统。
 
+## 📢 更新 (2026-03-22)
+
+### CNN+ASPE 隐私检索系统完整实现
+
+已完成 **CNN 图像检索 + SkNN 隐私保护检索** 的完整实现和模块化整合：
+
+**新增模块**：
+
+1. **core/cirtorch/** - 完整复制自 cnnimageretrieval-pytorch-master2
+   - `examples/` - 训练和测试脚本 (`train.py`, `test.py`, `test_e2e.py`)
+   - `scripts/` - 工具脚本 (`build_db.py` - 加密数据库构建)
+   - `api/` - FastAPI 路由端点 (`endpoints.py`)
+   - `services/` - 服务层 (`sknn_service.py` - SkNN 隐私检索服务)
+   - `layers/`, `networks/`, `datasets/`, `utils/` - 核心库代码
+
+2. **core/aspe/cnn_wrapper.py** - CNN 特征的 ASPE 加密包装器
+   - `ASPEForCNN` 类：支持 CNN 特征向量的 SkNN 加密
+   - 内积保持性验证
+   - 密钥生成/加载/保存
+
+3. **backend/app/routers/cir_retrieval.py** - 更新的 API 路由
+   - 明文检索端点（传统 CNN 相似度）
+   - SkNN 隐私检索端点（加密保护）
+   - 数据库构建和管理端点
+
+**SkNN 加密原理**：
+```
+建库端：S=0 时复制，S=1 时随机拆分
+查询端：S=0 时拆分 (r=0)，S=1 时复制
+密文内积 = 明文内积（保持性）
+```
+
+**快速使用**：
+```python
+# 方式 1: 使用 SknnService
+from cirtorch.services.sknn_service import SknnService
+
+service = SknnService(feature_dim=2048, model_path='model.pth')
+
+# 构建加密数据库
+db_features, db_images = service.build_database(
+    image_dir='./images',
+    save_dir='./data/retrieval_db'
+)
+
+# 隐私保护检索
+results = service.search(query_image_path='query.jpg', top_k=10)
+
+# 方式 2: 使用 ASPEForCNN
+from core.aspe.cnn_wrapper import ASPEForCNN
+
+aspe = ASPEForCNN(feature_dim=2048)
+aspe.generate_keys()  # 生成密钥
+
+# 加密数据库特征
+encrypted_db = aspe.encrypt_database(features)  # [N, 2d]
+
+# 加密查询
+enc_query = aspe.encrypt_query(query_feature)  # [2d]
+
+# 密文检索
+scores, indices = aspe.search(encrypted_db, query_feature, top_k=10)
+```
+
+**API 端点**：
+- `GET /api/cir/status` - 服务状态
+- `POST /api/cir/search` - 明文/密文检索
+- `POST /api/cir/sknn/keys/generate` - 生成 SkNN 密钥
+- `POST /api/cir/sknn/database/build` - 构建加密数据库
+- `POST /api/cir/sknn/search` - SkNN 隐私检索
+- `POST /api/cir/sknn/search/upload` - 上传图像隐私检索
+
+详见：
+- [core/cirtorch](core/cirtorch/) - CNN 检索核心库
+- [core/aspe/cnn_wrapper.py](core/aspe/cnn_wrapper.py) - ASPE 加密包装器
+- [backend/app/routers/cir_retrieval.py](backend/app/routers/cir_retrieval.py) - API 路由
+
+---
+
+### Flickr25K 完整系统测试和实验
+
+已添加 **Flickr25K 数据集完整测试和实验脚本**：
+
+- 🚀 **一键运行**：执行完整训练 + 评估流程
+- 📊 **实时可视化**：mAP 对比、Precision@K、训练曲线
+- 📝 **实验报告**：自动生成 Markdown 格式报告
+- 🔐 **ASPE 测试**：内积保持性、排序一致性、mAP 保持性验证
+
+**快速启动**：
+```bash
+# Windows
+run_flickr25k_experiment.bat
+
+# Linux/Mac
+./run_flickr25k_experiment.sh
+
+# 或手动运行
+python experiments/run_flickr25k.py --data data/flickr25k/FLICKR-25K.mat --bit 64 --epochs 500
+```
+
+**输出结果**（`results/flickr-25k/` 目录）：
+- `flickr25k_experiment_report.md` - 完整实验报告
+- `flickr25k_experiment_results.json` - 详细数据
+- `*.png` - 可视化图表
+- `dcmh_best.pth` - 最佳模型检查点
+
+详见 [Flickr25K 实验](#flickr25k-实验)
+
+---
+
 ## 📢 更新 (2026-03-21)
 
 ### 前端 UI/UX 美化 (2026-03-21)
@@ -72,6 +182,94 @@
 
 ---
 
+## Flickr25K 实验
+
+### 概述
+
+[Flickr25K](https://forms.illinois.edu/sec/2298948) 是一个包含 25,015 张图像的跨模态检索数据集，每张图像配有文本描述和 24 个类别标签。
+
+**数据集统计**：
+| 划分 | 样本数 |
+|------|--------|
+| 查询集 | 2,000 |
+| 训练集 | 10,000 |
+| 数据库 | 18,015 |
+| 类别数 | 24 |
+
+### 快速启动
+
+**Windows**：
+```bash
+run_flickr25k_experiment.bat
+```
+
+**Linux/Mac**：
+```bash
+chmod +x run_flickr25k_experiment.sh
+./run_flickr25k_experiment.sh
+```
+
+**手动运行**：
+```bash
+python experiments/run_flickr25k.py \
+    --data data/flickr25k/FLICKR-25K.mat \
+    --bit 64 \
+    --epochs 500 \
+    --batch-size 128 \
+    --lr 1e-4 \
+    --result-dir results/flickr-25k
+```
+
+### 配置选项
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--data` | `data/flickr25k/FLICKR-25K.mat` | 数据文件路径 |
+| `--bit` | 64 | 哈希码维度 |
+| `--epochs` | 500 | 最大训练轮数 |
+| `--batch-size` | 128 | 批次大小 |
+| `--lr` | 1e-4 | 学习率 |
+| `--result-dir` | `results/flickr-25k` | 结果输出目录 |
+| `--no-gpu` | - | 禁用 GPU |
+
+### 输出结果
+
+实验完成后，`results/flickr-25k/` 目录包含：
+
+**报告和数据**：
+- `flickr25k_experiment_report.md` - Markdown 格式实验报告
+- `flickr25k_experiment_results.json` - JSON 格式详细数据
+
+**可视化图表**：
+- `flickr25k_map_comparison.png` - mAP 对比图
+- `flickr25k_precision_k.png` - Precision@K 对比图
+- `flickr25k_training_curve.png` - 训练损失和 mAP 曲线
+- `flickr25k_aspe_test.png` - ASPE 加密测试结果
+
+**模型检查点**：
+- `dcmh_best.pth` - 最佳模型（验证 mAP 最高）
+- `dcmh_final.pth` - 最终模型
+- `dcmh_checkpoint_*.pth` - 每 50 轮保存的检查点
+
+### 实验流程
+
+实验脚本自动执行以下步骤：
+
+1. **数据加载** - 从 FLICKR-25K.mat 加载图像、文本和标签
+2. **DCMH 训练** - 训练双流哈希模型（图像 + 文本）
+3. **检索评估** - 计算 mAP、Precision@K、Recall@K
+4. **ASPE 测试** - 验证内积保持性、排序一致性、mAP 保持性
+5. **可视化** - 生成图表和 Markdown 报告
+
+### 预期性能
+
+在 Flickr25K 数据集上的典型性能（bit=64）：
+- **图像→文本 mAP**: ~0.55-0.65
+- **文本→图像 mAP**: ~0.50-0.60
+- **平均 mAP**: ~0.55
+
+---
+
 ## 系统概述
 
 本系统支持：
@@ -106,43 +304,113 @@
 
 ```
 DeepHash-ASPE/
-├── config/              # 配置文件
-│   ├── model_config.py          # 模型配置（包含 DCMH_CONFIG）
-│   ├── aspe_config.py           # ASPE 加密配置
-│   ├── train_config.py          # 训练参数配置
-│   └── coco_config.py           # MS-COCO 数据集配置
-├── core/
-│   ├── aspe/           # ASPE 加密方案
-│   │   ├── scheme1.py           # 基础 2 级安全方案
-│   │   ├── scheme2.py           # 增强 3 级安全方案
-│   │   ├── keygen.py            # 密钥生成
-│   │   └── dcmh_wrapper.py      # DCMH 集成包装器
-│   ├── hashing/        # 深度哈希模型
-│   │   ├── dcmh_basic.py        # DCMH 基础模块
-│   │   ├── dcmh_image.py        # DCMH 图像编码模块
-│   │   ├── dcmh_text.py         # DCMH 文本编码模块
-│   │   ├── dcmh_model.py        # DCMH 双流模型
-│   │   ├── image_hash.py        # 基于 CNN 的图像模型（备选）
-│   │   ├── text_hash.py         # 基于 NLP 的文本模型（备选）
-│   │   └── dual_stream.py       # 双流模型（旧版，保留兼容）
-│   └── retrieval/      # 隐私保护检索
-├── reference/
-│   └── DCMH/           # DCMH 参考实现（仅供查阅）
-├── data/               # 数据加载和预处理
-├── training/           # 训练流程
-│   ├── trainer.py               # 训练器
-│   ├── loss.py                  # 通用损失函数
-│   ├── dcmh_loss.py             # DCMH 特定损失函数
-│   └── scheduler.py             # 学习率调度器
-├── evaluation/         # 评估指标和基准测试
-├── utils/              # 工具函数
-├── examples/           # 示例脚本
-│   └── dcmh_aspe_demo.py        # DCMH + ASPE 集成演示
-├── tests/              # 单元测试
-│   └── test_aspe_dcmh.py        # DCMH 集成测试
-├── checkpoints/        # 模型检查点
-└── results/            # 评估结果
+├── config/                 # 配置文件
+│   ├── __init__.py
+│   ├── model_config.py     # 模型配置（DCMH、CNN）
+│   ├── aspe_config.py      # ASPE 加密配置
+│   ├── train_config.py     # 训练参数配置
+│   ├── dataset_config.py   # 数据集配置（Flickr25K, NUS-WIDE 等）
+│   ├── eval_config.py      # 评估配置
+│   └── dcmh_config.py      # DCMH 专用配置
+│
+├── core/                   # 核心库
+│   ├── aspe/               # ASPE 加密方案
+│   │   ├── __init__.py
+│   │   ├── scheme1.py      # 基础 2 级安全方案
+│   │   ├── scheme2.py      # 增强 3 级安全方案
+│   │   ├── keygen.py       # 密钥生成
+│   │   ├── dcmh_wrapper.py # DCMH 集成包装器
+│   │   └── cnn_wrapper.py  # CNN 集成包装器
+│   │
+│   ├── hashing/            # 深度哈希模型
+│   │   ├── __init__.py
+│   │   ├── dcmh_image.py   # DCMH 图像编码器 (AlexNet CNN)
+│   │   ├── dcmh_text.py    # DCMH 文本编码器 (卷积标签处理)
+│   │   ├── dcmh_model.py   # DCMH 双流模型
+│   │   └── dcmh_basic.py   # DCMH 基础模块
+│   │
+│   ├── cirtorch/           # CNN 图像检索 (复制自 reference)
+│   │   ├── layers/         # pooling, normalization, loss
+│   │   ├── networks/       # ImageRetrievalNet
+│   │   ├── datasets/       # 数据加载器
+│   │   ├── utils/          # 评估、whitening、下载
+│   │   ├── api/            # FastAPI 端点
+│   │   └── services/       # 服务层 (SkNN 检索)
+│   │
+│   └── retrieval/          # 检索工具
+│       └── dcmh_metrics.py # DCMH 评估指标
+│
+├── reference/              # 参考实现（只读）
+│   ├── DCMH/                       # DCMH 原始代码
+│   └── cnnimageretrieval-pytorch-master2/  # cirtorch 原始代码
+│
+├── training/               # 训练流程
+│   ├── __init__.py
+│   ├── trainer.py          # 通用训练器
+│   ├── dcmh_loss.py        # DCMH 专用损失函数
+│   ├── scheduler.py        # 学习率调度器
+│   └── train_flickr25k.py  # Flickr25K 训练脚本
+│
+├── evaluation/             # 评估工具
+│   ├── __init__.py
+│   ├── metrics.py          # 通用评估指标
+│   ├── security.py         # 安全属性评估
+│   ├── benchmark.py        # 性能基准测试
+│   ├── evaluate_flickr25k.py   # Flickr25K 评估
+│   └── quick_eval_dcmh_aspe.py # DCMH+ASPE 快速评估
+│
+├── experiments/            # 完整实验脚本
+│   ├── __init__.py
+│   └── run_flickr25k.py    # Flickr25K 完整实验
+│
+├── examples/               # 示例脚本
+│   ├── __init__.py
+│   ├── dcmh_aspe_demo.py   # DCMH+ASPE 集成演示
+│   ├── build_encrypted_db.py # 构建加密数据库
+│   ├── text_to_image.py    # 文本→图像检索示例
+│   └── image_to_text.py    # 图像→文本检索示例
+│
+├── tests/                  # 单元测试
+│   ├── __init__.py
+│   ├── test_aspe_dcmh.py       # ASPE+DCMH 集成测试
+│   ├── test_cnn_aspe.py        # CNN+ASPE 集成测试
+│   └── test_dataset_downloader.py # 数据集下载测试
+│
+├── backend/                # FastAPI 后端
+│   ├── app/
+│   │   ├── main.py
+│   │   ├── routers/        # API 路由
+│   │   └── services/       # 业务服务
+│   └── start_backend.py
+│
+├── frontend/               # Next.js 14 前端
+│   ├── src/
+│   ├── public/
+│   └── package.json
+│
+├── data/                   # 数据集
+│   ├── FLICKR-25K.mat      # Flickr25K 数据集
+│   └── imagenet-vgg-f.mat  # CNN 预训练模型
+│
+├── checkpoints/            # 模型检查点
+├── results/                # 评估结果
+├── utils/                  # 通用工具
+│   ├── __init__.py
+│   ├── crypto.py           # 加密工具
+│   └── matrix.py           # 矩阵运算工具
+│
+├── run_flickr25k_experiment.bat/sh  # 快捷实验脚本
+├── download_datasets.bat/sh         # 快捷下载脚本
+├── start_all.bat/sh                 # 启动所有服务
+└── README.md
 ```
+
+> **注**：项目已于 2026-03-22 完成重构，删除了以下冗余文件：
+> - 旧版哈希模型：`image_hash.py`, `text_hash.py`, `dual_stream.py`
+> - 旧版检索模块：`cir_service.py`, `feature_extractor.py`, `pipeline.py`, `secure_retrieval.py`
+> - 重复脚本：`quick_download.py`, `quick_flickr25k.py`, `run_flickr25k.py`
+> - 冗余测试：`test_dcmh_full.py`, `test_dcmh_aspe_comprehensive.py`
+> - 重复损失函数：`training/loss.py`
 
 ## 安装
 
@@ -302,58 +570,44 @@ print(f"二进制图像哈希唯一值：{torch.unique(binary_img)}")
 
 ## 快速开始
 
-### 1. 在 MS-COCO 上训练
+### 1. 训练 DCMH 模型（Flickr25K）
 
-```python
-from examples import train_on_coco
+```bash
+# 使用脚本（Windows）
+run_flickr25k_experiment.bat
 
-# 首先更新 config/coco_config.py 中的路径
-train_on_coco.main()
+# 使用脚本（Linux/Mac）
+./run_flickr25k_experiment.sh
+
+# 或直接使用 Python
+python training/train_flickr25k.py --data data/FLICKR-25K.mat --bit 64 --epochs 100
 ```
 
-### 2. 构建加密数据库
+### 2. 运行完整实验
 
-```python
-from examples import build_encrypted_db
-
-build_encrypted_db.main()
+```bash
+# 完整训练 + 评估 + 可视化
+python experiments/run_flickr25k.py --bit 64 --epochs 500
 ```
 
-### 3. 执行检索
+### 3. 快速评估 DCMH+ASPE
 
-```python
-from examples import text_to_image, image_to_text
+```bash
+python evaluation/quick_eval_dcmh_aspe.py --mode quick --bit 64
+```
 
-# 文本 → 图像检索
-text_to_image.main()
+### 4. 查看演示示例
 
-# 图像 → 文本检索
-image_to_text.main()
+```bash
+# DCMH+ASPE 集成演示
+python examples/dcmh_aspe_demo.py
+
+# CNN+ASPE 测试
+python tests/test_cnn_aspe.py
 ```
 
 ## 使用示例
 
-### 基础检索流程
-
-```python
-import torch
-from core.hashing.dual_stream import DualStreamHashModel
-from core.retrieval.pipeline import RetrievalPipeline
-
-# 加载模型
-model = DualStreamHashModel(vocab_size=10000, feature_dim=4096)
-
-# 创建检索流程
-pipeline = RetrievalPipeline(model, aspe_scheme='scheme1')
-
-# 准备数据库
-pipeline.prepare_database(images=image_list, texts=text_list)
-
-# 执行检索
-results = pipeline.text_to_image(query_text, k=10)
-for result in results:
-    print(f"得分: {result['score']}, 元数据: {result['metadata']}")
-```
 
 ### 直接使用 ASPE
 
@@ -440,21 +694,15 @@ hamm = 0.5×(bit - p·q) = 0.25×bit - 0.5×cipher_ip
 - `DCMHImageModule`：AlexNet 风格的 CNN 图像编码器
 - `DCMHTextModule`：基于卷积的文本标签编码器
 - `DCMHModel`：统一的双流哈希模型
-- `DCMHWithQuantization`：带量化训练的 DCMH 模型
-
-#### 旧版模型（保留兼容）
-- `ImageHashModel`：基于 CNN 的图像编码器（ResNet50/VGG16）
-- `TextHashModel`：基于 NLP 的文本编码器（Transformer/LSTM）
-- `DualStreamHashModel`：用于公共嵌入空间的统一模型
 
 ### ASPE 加密
 - `ASPEScheme1`：基础 2 级安全（抵抗已知样本攻击）
 - `ASPEScheme2`：增强 3 级安全（抵抗已知明文攻击）
 - `ASPEForDCMH`：DCMH 专用包装器（支持 {-1, +1} 哈希码）
+- `ASPEForCNN`：CNN 专用包装器（支持 SkNN 加密）
 
 ### 检索
 - `SecureRetrievalEngine`：隐私保护相似度搜索
-- `RetrievalPipeline`：端到端检索流程
 
 ### 损失函数
 - `DCMHCombinedLoss`：DCMH 组合损失（跨模态 + 量化）
@@ -479,7 +727,72 @@ hamm = 0.5×(bit - p·q) = 0.25×bit - 0.5×cipher_ip
 
 ## 数据集
 
-系统设计用于 MS-COCO 2014：
+### 系统测试数据集
+
+DCMH + ASPE 系统使用**类别标签 multi-hot 编码**作为文本输入，而非自然语言文本。
+这意味着只需要**图像 + 类别标签**，不需要复杂的文本标注。
+
+#### 推荐数据集
+
+| 优先级 | 数据集 | 标签数 | 图像数 | 推荐理由 |
+|--------|--------|--------|--------|----------|
+| 1 | **Flickr-25K** | 24 | 25K | 参考实现原生支持，DCMH 论文基准 |
+| 2 | **IAPR TC-12** | 255 | 20K | 多标签基准，图像质量高 |
+| 3 | **NUS-WIDE** | 81 | 270K | 多标签检索标准基准 |
+| 4 | **MS-COCO** | 80 | 118K | 代码已内置支持 |
+
+#### 下载方法
+
+**方法 1：使用下载脚本（推荐）**
+
+```bash
+# Windows
+download_datasets.bat
+
+# Linux/Mac
+./download_datasets.sh
+```
+
+**方法 2：手动下载**
+
+##### Flickr-25K（推荐）
+- 百度网盘：https://pan.baidu.com/s/1X5BTyux524aUyqHpFGPPlA
+- 提取码：`eico`
+- 目标路径：`data/flickr25k/FLICKR-25K.mat`
+
+##### IAPR TC-12
+- 官网：http://www.imageclef.org/photodata
+- 需要注册并申请下载
+- 目标路径：`data/iapr_tc12/IAPR-TC12.mat`
+
+##### NUS-WIDE
+- 官网：http://lms.comp.nus.edu.sg/research/nuswide.shtml
+- 下载 ImageList.txt 和 Groundtruth.zip
+- 目标路径：`data/nuswide/NUS-WIDE.mat`
+
+#### 数据集配置
+
+在 `config/dataset_config.py` 中配置数据集路径：
+
+```python
+from config.dataset_config import get_dataset_config, check_dataset_exists
+
+# 获取 Flickr-25K 配置
+config = get_dataset_config('flickr25k')
+print(config['data_path'])  # ./data/flickr25k/FLICKR-25K.mat
+print(config['n_classes'])  # 24
+print(config['n_images'])   # 25015
+
+# 检查数据集是否存在
+exists, path, msg = check_dataset_exists('flickr25k')
+if exists:
+    print(f"数据集已就绪：{path}")
+else:
+    print(f"需要下载数据集：{path}")
+```
+
+### MS-COCO 2014（备选）
+
 - 从 [COCO 数据集](https://cocodataset.org/)下载
 - 在 `config/coco_config.py` 中更新路径
 

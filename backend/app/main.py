@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # 导入路由
-from app.routers import images, texts, hash_codes, encrypt, search, metrics
+from app.routers import images, texts, hash_codes, encrypt, search, metrics, cir_retrieval
 
 # 创建 FastAPI 应用
 app = FastAPI(
@@ -45,7 +45,7 @@ static_dir.mkdir(exist_ok=True)
 
 # 挂载静态文件
 if (static_dir / "uploads").exists() or True:
-    app.mount("/uploads", StaticFiles(directory=str(static_dir / "uploads"), html=True), mount_path="/uploads")
+    app.mount("/uploads", StaticFiles(directory=str(static_dir / "uploads"), html=True))
 
 # 注册路由
 app.include_router(images.router)
@@ -54,6 +54,7 @@ app.include_router(hash_codes.router)
 app.include_router(encrypt.router)
 app.include_router(search.router)
 app.include_router(metrics.router)
+app.include_router(cir_retrieval.router)
 
 
 @app.get("/")
