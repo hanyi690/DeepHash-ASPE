@@ -18,6 +18,7 @@ import torch.nn.functional as torch_func
 from torch.autograd import Variable
 from torch.optim import SGD
 from torch.utils.data import DataLoader
+from torch.amp import autocast, GradScaler
 from tqdm import tqdm
 import os
 from datetime import datetime
@@ -41,6 +42,10 @@ class TrainConfig(DCMHConfig):
     # 断点恢复
     checkpoint_interval = 10  # 每 N 个 epoch 保存一次检查点
     resume_from = None  # 从指定检查点恢复（目录路径）
+
+    # 训练优化（PyTorch 2.0+）
+    use_amp = True  # 混合精度训练（自动检测 GPU）
+    use_compile = True  # torch.compile 优化（PyTorch 2.0+）
 
 
 def train(**kwargs):
@@ -133,6 +138,21 @@ def train(**kwargs):
         img_model = img_model.cuda()
         txt_model = txt_model.cuda()
         device = 'cuda'
+
+        # torch.compile 优化（PyTorch 2.0+，仅 Linux 支持）
+        # Windows 上 Triton 不可用，跳过 compile
+        if opt.use_compile and hasattr(torch, 'compile'):
+            import platform
+            if platform.system() != 'Windows':
+                try:
+                    print("正在编译模型 (torch.compile)...")
+                    img_model = torch.compile(img_model, mode='reduce-overhead')
+                    txt_model = torch.compile(txt_model, mode='reduce-overhead')
+                    print("模型编译完成！")
+                except Exception as e:
+                    print(f"torch.compile 失败，使用原始模型: {e}")
+            else:
+                print("Windows 平台不支持 torch.compile，跳过编译")
     else:
         device = 'cpu'
     print(f"模型构建完成！设备：{device}")
@@ -156,6 +176,12 @@ def train(**kwargs):
     # 创建优化器（添加 momentum 和 weight_decay，匹配 Matlab 原始实现）
     optimizer_img = SGD(img_model.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
     optimizer_txt = SGD(txt_model.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
+
+    # 混合精度训练 GradScaler
+    use_amp = opt.use_amp and opt.use_gpu and torch.cuda.is_available()
+    scaler = GradScaler('cuda', enabled=use_amp) if use_amp else None
+    if use_amp:
+        print("已启用混合精度训练 (AMP)")
 
     # ========== 检查点恢复 ==========
     start_epoch = 0
@@ -258,26 +284,34 @@ def train(**kwargs):
             # 计算相似性矩阵
             S = calc_neighbor(sample_L, train_L)
 
-            # 前向传播
-            cur_f = img_model(image)
+            # 混合精度训练
+            with autocast('cuda', enabled=use_amp):
+                # 前向传播
+                cur_f = img_model(image)
 
-            # 更新 F_buffer
-            F_buffer[indices, :] = cur_f.data
-            F = Variable(F_buffer)
-            G = Variable(G_buffer)
+                # 计算损失
+                unupdated_ind = np.setdiff1d(range(num_train), indices)
+                theta_x = 1.0 / 2 * torch.matmul(cur_f, G_buffer.t())
+                logloss_x = -torch.sum(S * theta_x - torch_func.softplus(theta_x))
+                quantization_x = torch.sum(torch.pow(B[indices, :] - cur_f, 2))
+                balance_x = torch.sum(torch.pow(cur_f.t().mm(ones) + F_buffer[unupdated_ind].t().mm(ones_), 2))
+                loss_x = logloss_x + opt.gamma * quantization_x + opt.eta * balance_x
+                loss_x = loss_x / num_train
 
-            # 计算损失
-            unupdated_ind = np.setdiff1d(range(num_train), indices)
-            theta_x = 1.0 / 2 * torch.matmul(cur_f, G.t())
-            logloss_x = -torch.sum(S * theta_x - torch_func.softplus(theta_x))
-            quantization_x = torch.sum(torch.pow(B[indices, :] - cur_f, 2))
-            balance_x = torch.sum(torch.pow(cur_f.t().mm(ones) + F[unupdated_ind].t().mm(ones_), 2))
-            loss_x = logloss_x + opt.gamma * quantization_x + opt.eta * balance_x
+            # 更新 F_buffer（在 autocast 外，确保 float32）
+            F_buffer[indices, :] = cur_f.float().data
 
             optimizer_img.zero_grad()
-            (loss_x / num_train).backward()
-            torch.nn.utils.clip_grad_norm_(img_model.parameters(), max_norm=5.0)
-            optimizer_img.step()
+            if use_amp:
+                scaler.scale(loss_x).backward()
+                scaler.unscale_(optimizer_img)
+                torch.nn.utils.clip_grad_norm_(img_model.parameters(), max_norm=5.0)
+                scaler.step(optimizer_img)
+                scaler.update()
+            else:
+                loss_x.backward()
+                torch.nn.utils.clip_grad_norm_(img_model.parameters(), max_norm=5.0)
+                optimizer_img.step()
 
         # ========== 训练文本网络 ==========
         txt_model.train()
@@ -294,21 +328,32 @@ def train(**kwargs):
                 sample_L = sample_L.cuda()
 
             S = calc_neighbor(sample_L, train_L)
-            cur_g = txt_model(text)
-            G_buffer[ind, :] = cur_g.data
-            F = Variable(F_buffer)
-            G = Variable(G_buffer)
 
-            theta_y = 1.0 / 2 * torch.matmul(cur_g, F.t())
-            logloss_y = -torch.sum(S * theta_y - torch_func.softplus(theta_y))
-            quantization_y = torch.sum(torch.pow(B[ind, :] - cur_g, 2))
-            balance_y = torch.sum(torch.pow(cur_g.t().mm(ones) + G[unupdated_ind].t().mm(ones_), 2))
-            loss_y = logloss_y + opt.gamma * quantization_y + opt.eta * balance_y
+            # 混合精度训练
+            with autocast('cuda', enabled=use_amp):
+                cur_g = txt_model(text)
+
+                theta_y = 1.0 / 2 * torch.matmul(cur_g, F_buffer.t())
+                logloss_y = -torch.sum(S * theta_y - torch_func.softplus(theta_y))
+                quantization_y = torch.sum(torch.pow(B[ind, :] - cur_g, 2))
+                balance_y = torch.sum(torch.pow(cur_g.t().mm(ones) + G_buffer[unupdated_ind].t().mm(ones_), 2))
+                loss_y = logloss_y + opt.gamma * quantization_y + opt.eta * balance_y
+                loss_y = loss_y / num_train
+
+            # 更新 G_buffer（在 autocast 外，确保 float32）
+            G_buffer[ind, :] = cur_g.float().data
 
             optimizer_txt.zero_grad()
-            (loss_y / num_train).backward()
-            torch.nn.utils.clip_grad_norm_(txt_model.parameters(), max_norm=5.0)
-            optimizer_txt.step()
+            if use_amp:
+                scaler.scale(loss_y).backward()
+                scaler.unscale_(optimizer_txt)
+                torch.nn.utils.clip_grad_norm_(txt_model.parameters(), max_norm=5.0)
+                scaler.step(optimizer_txt)
+                scaler.update()
+            else:
+                loss_y.backward()
+                torch.nn.utils.clip_grad_norm_(txt_model.parameters(), max_norm=5.0)
+                optimizer_txt.step()
 
         # ========== 更新 B ==========
         B = torch.sign(F_buffer + G_buffer)
