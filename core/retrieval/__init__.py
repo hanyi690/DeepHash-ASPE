@@ -1,6 +1,5 @@
-"""CNN Image Retrieval Service and Feature Extractor."""
+"""DCMH 检索工具"""
 
-from .cir_service import CIRService
-from .feature_extractor import FeatureExtractor
+from .dcmh_metrics import calc_map_k, calc_hammingDist
 
-__all__ = ['CIRService', 'FeatureExtractor']
+__all__ = ['calc_map_k', 'calc_hammingDist']

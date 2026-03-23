@@ -106,6 +106,7 @@ class DCMHImageModule(DCMHBasicModule):
         返回：
             哈希码张量 [batch, bit]
         """
+        # 与 reference/DCMH/models/img_module.py 完全一致
         if x.is_cuda:
             x = x - self.mean.cuda()
         else:

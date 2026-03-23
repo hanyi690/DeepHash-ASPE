@@ -10,13 +10,13 @@ import torch
 from torch.utils.model_zoo import load_url
 from torchvision import transforms
 
-from cirtorch.networks.imageretrievalnet import init_network, extract_vectors
-from cirtorch.datasets.datahelpers import cid2filename
-from cirtorch.datasets.testdataset import configdataset
-from cirtorch.utils.download import download_train, download_test
-from cirtorch.utils.whiten import whitenlearn, whitenapply
-from cirtorch.utils.evaluate import compute_map_and_print
-from cirtorch.utils.general import get_data_root, htime
+from ..networks.imageretrievalnet import init_network, extract_vectors
+from ..datasets.datahelpers import cid2filename
+from ..datasets.testdataset import configdataset
+from ..utils.download import download_train, download_test
+from ..utils.whiten import whitenlearn, whitenapply
+from ..utils.evaluate import compute_map_and_print
+from ..utils.general import get_data_root, htime
 
 PRETRAINED = {
     'retrievalSfM120k-vgg16-gem'        : 'http://cmp.felk.cvut.cz/cnnimageretrieval/data/networks/retrieval-SfM-120k/retrievalSfM120k-vgg16-gem-b4dcdc6.pth',

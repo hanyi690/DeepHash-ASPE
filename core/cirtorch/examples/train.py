@@ -16,15 +16,15 @@ import torch.utils.data
 import torchvision.transforms as transforms
 import torchvision.models as models
 
-from cirtorch.networks.imageretrievalnet import init_network, extract_vectors
-from cirtorch.layers.loss import ContrastiveLoss, TripletLoss
-from cirtorch.datasets.datahelpers import collate_tuples, cid2filename
-from cirtorch.datasets.traindataset import TuplesDataset
-from cirtorch.datasets.testdataset import configdataset
-from cirtorch.utils.download import download_train, download_test
-from cirtorch.utils.whiten import whitenlearn, whitenapply
-from cirtorch.utils.evaluate import compute_map_and_print
-from cirtorch.utils.general import get_data_root, htime
+from ..networks.imageretrievalnet import init_network, extract_vectors
+from ..layers.loss import ContrastiveLoss, TripletLoss
+from ..datasets.datahelpers import collate_tuples, cid2filename
+from ..datasets.traindataset import TuplesDataset
+from ..datasets.testdataset import configdataset
+from ..utils.download import download_train, download_test
+from ..utils.whiten import whitenlearn, whitenapply
+from ..utils.evaluate import compute_map_and_print
+from ..utils.general import get_data_root, htime
 
 training_dataset_names = ['retrieval-SfM-120k']
 test_datasets_names = ['oxford5k', 'paris6k', 'roxford5k', 'rparis6k']

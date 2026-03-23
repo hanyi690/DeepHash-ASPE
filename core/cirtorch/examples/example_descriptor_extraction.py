@@ -6,10 +6,10 @@ import torch
 from torch.utils.model_zoo import load_url
 from torchvision import transforms
 
-from cirtorch.networks.imageretrievalnet import init_network, extract_ms, extract_ss
-from cirtorch.datasets.datahelpers import imresize, default_loader
-from cirtorch.utils.general import get_data_root
-from cirtorch.utils.whiten import whitenapply
+from ..networks.imageretrievalnet import init_network, extract_ms, extract_ss
+from ..datasets.datahelpers import imresize, default_loader
+from ..utils.general import get_data_root
+from ..utils.whiten import whitenapply
 
 
 TRAINED = {

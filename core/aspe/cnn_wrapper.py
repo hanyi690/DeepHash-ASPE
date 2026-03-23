@@ -114,11 +114,16 @@ class ASPEForCNN:
             密文特征 [2d]
         """
         d = len(p)
+        # 确保密钥在正确设备上
+        M1 = self.M1.to(p.device)
+        M2 = self.M2.to(p.device)
+        S = self.S.to(p.device)
+
         p1 = torch.zeros(d, device=p.device)
         p2 = torch.zeros(d, device=p.device)
 
         for i in range(d):
-            if self.S[i] == 0:
+            if S[i] == 0:
                 p1[i] = p[i]
                 p2[i] = p[i]
             else:
@@ -127,8 +132,8 @@ class ASPEForCNN:
                 p2[i] = p[i] - r
 
         # 线性变换
-        enc_part1 = torch.matmul(self.M1.T, p1)
-        enc_part2 = torch.matmul(self.M2.T, p2)
+        enc_part1 = torch.matmul(M1.T, p1)
+        enc_part2 = torch.matmul(M2.T, p2)
 
         return torch.cat((enc_part1, enc_part2))
 
@@ -147,11 +152,16 @@ class ASPEForCNN:
             密文陷阱门 [2d]
         """
         d = len(p)
-        q1 = torch.zeros(d, device=self.device)
-        q2 = torch.zeros(d, device=self.device)
+        # 确保密钥在正确设备上
+        M1 = self.M1.to(p.device)
+        M2 = self.M2.to(p.device)
+        S = self.S.to(p.device)
+
+        q1 = torch.zeros(d, device=p.device)
+        q2 = torch.zeros(d, device=p.device)
 
         for i in range(d):
-            if self.S[i] == 0:
+            if S[i] == 0:
                 # r=0 消除浮点误差
                 q1[i] = 0.0
                 q2[i] = p[i]
@@ -160,8 +170,8 @@ class ASPEForCNN:
                 q2[i] = p[i]
 
         # Float64 高精度计算
-        M1_double = self.M1.to(torch.float64)
-        M2_double = self.M2.to(torch.float64)
+        M1_double = M1.to(torch.float64)
+        M2_double = M2.to(torch.float64)
         q1_double = q1.to(torch.float64)
         q2_double = q2.to(torch.float64)
 
