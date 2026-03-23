@@ -5,13 +5,13 @@
 """
 
 from fastapi import APIRouter, HTTPException
-from typing import Optional
+from typing import Optional, List
 import torch
 import numpy as np
 
 from app.schemas.search import HashCodeRequest, HashCodeResponse
 from app.services.dcmh_service import get_dcmh_service
-from app.services.coco_service import get_coco_service
+from app.services.dataset_service import get_dataset_service
 
 router = APIRouter(prefix="/api/hash", tags=["hash"])
 
@@ -21,17 +21,29 @@ async def generate_image_hash(image_data: dict):
     """从图像数据生成哈希码。"""
     try:
         dcmh_service = get_dcmh_service()
-        coco_service = get_coco_service()
+        dataset_service = get_dataset_service()
+        dataset_service.load_data()
 
         # 解析输入
         if "image_id" in image_data:
             image_id = image_data["image_id"]
-            image_tensor, _ = coco_service.get_image(image_id)
-            if image_tensor is None:
+
+            # 检查图像是否在检索库中
+            _, _, retrieval_indices = dataset_service.get_data_split_indices()
+            if image_id not in retrieval_indices:
                 return HashCodeResponse(
                     success=False,
-                    message=f"图像 {image_id} 不存在"
+                    message=f"图像 {image_id} 不在检索库中"
                 )
+
+            # 加载图像
+            dataloader = dataset_service.create_image_dataloader(
+                np.array([image_id]), batch_size=1
+            )
+            for batch in dataloader:
+                image_tensor = batch
+                break
+
         elif "tensor" in image_data:
             # 直接使用张量数据
             tensor_data = image_data["tensor"]
@@ -61,27 +73,36 @@ async def generate_image_hash(image_data: dict):
 
 @router.post("/text", response_model=HashCodeResponse)
 async def generate_text_hash(text_data: dict):
-    """从文本数据生成哈希码。"""
+    """从标签向量生成哈希码。"""
     try:
         dcmh_service = get_dcmh_service()
-        coco_service = get_coco_service()
+        dataset_service = get_dataset_service()
+        dataset_service.load_data()
+
+        # 获取标签维度
+        tags = dataset_service.get_tags()
+        label_dim = tags.shape[1] if tags is not None else 1386
 
         # 解析输入
-        if "text" in text_data:
-            text = text_data["text"]
-            text_vector = coco_service.text_to_vector(text)
-            text_tensor = text_vector.unsqueeze(0)
+        if "label_indices" in text_data:
+            # 从标签索引构建向量
+            label_indices = text_data["label_indices"]
+            label_vector = np.zeros(label_dim, dtype=np.float32)
+            for idx in label_indices:
+                if 0 <= idx < label_dim:
+                    label_vector[idx] = 1.0
+            text_tensor = torch.from_numpy(label_vector).unsqueeze(0).float()
         elif "vector" in text_data:
             vector_data = text_data["vector"]
-            text_tensor = torch.tensor(vector_data).unsqueeze(0)
+            text_tensor = torch.tensor(vector_data).unsqueeze(0).float()
         else:
             return HashCodeResponse(
                 success=False,
-                message="必须提供 text 或 vector"
+                message="必须提供 label_indices 或 vector"
             )
 
         # 生成哈希码
-        hash_code = dcmh_service.generate_text_code(text_tensor)
+        hash_code = dcmh_service.generate_text_code_single(text_tensor)
         hash_code_list = hash_code.squeeze().tolist()
 
         return HashCodeResponse(

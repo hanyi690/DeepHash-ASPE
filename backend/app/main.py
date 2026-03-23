@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # 导入路由
-from app.routers import images, texts, hash_codes, encrypt, search, metrics, cir_retrieval
+from app.routers import images, texts, hash_codes, encrypt, search, metrics, cir_retrieval, labels
 
 # 创建 FastAPI 应用
 app = FastAPI(
@@ -55,6 +55,7 @@ app.include_router(encrypt.router)
 app.include_router(search.router)
 app.include_router(metrics.router)
 app.include_router(cir_retrieval.router)
+app.include_router(labels.router)
 
 
 @app.get("/")
@@ -87,7 +88,7 @@ async def startup_event():
     try:
         from app.services.dcmh_service import get_dcmh_service
         from app.services.aspe_service import get_aspe_service
-        from app.services.coco_service import get_coco_service
+        from app.services.dataset_service import get_dataset_service
 
         # 初始化 DCMH 服务
         print("正在初始化 DCMH 服务...")
@@ -99,10 +100,10 @@ async def startup_event():
         aspe_service = get_aspe_service(bit_dim=64, seed=42)
         print(f"  - ASPE 密钥种子：{aspe_service.seed}")
 
-        # 初始化 COCO 服务
-        print("正在初始化 COCO 服务...")
-        coco_service = get_coco_service()
-        print(f"  - 数据集已加载：{coco_service.images_data is not None}")
+        # 初始化数据集服务
+        print("正在初始化数据集服务...")
+        dataset_service = get_dataset_service()
+        print(f"  - 数据路径：{dataset_service.data_path}")
 
         print("=" * 50)
         print("服务初始化完成")

@@ -3,7 +3,7 @@ CNN Image Retrieval API Routes
 
 支持两种检索模式：
 1. 明文检索（传统 CNN 特征相似度）
-2. 隐私检索（SkNN 加密保护）
+2. 隐私检索（ASPE 加密保护）
 """
 
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Query, Form
@@ -19,7 +19,7 @@ from PIL import Image
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from app.services.cir_service import get_cir_service
+from app.services.cir_service import get_cir_service, CIRService
 from core.aspe.cnn_wrapper import ASPEForCNN
 
 logger = logging.getLogger(__name__)
@@ -69,21 +69,6 @@ class SknnSearchRequest(BaseModel):
     """Request model for SkNN privacy search."""
     query_image_path: str = Field(..., description="Path to query image")
     top_k: int = Field(default=10, ge=1, le=100)
-
-
-# ============= 全局状态 =============
-
-# SkNN 服务实例（懒加载）
-_sknn_service: Optional[ASPEForCNN] = None
-_sknn_encrypted_db: Optional[Any] = None
-
-
-def get_sknn_service() -> ASPEForCNN:
-    """Get or create SkNN service instance."""
-    global _sknn_service
-    if _sknn_service is None:
-        _sknn_service = ASPEForCNN()
-    return _sknn_service
 
 
 # ============= CNN 检索端点（明文模式） =============
@@ -223,25 +208,16 @@ async def build_sknn_database(
 
     流程：
     1. 提取每张图像的 CNN 特征
-    2. 使用 SkNN 方案加密特征
+    2. 使用 ASPE 方案加密特征
     3. 保存加密数据库和密钥
     """
-    from cirtorch.services.sknn_service import SknnService
+    service = get_cir_service()
 
     try:
-        service = SknnService(feature_dim=feature_dim)
         db_features, db_images = service.build_database(
             image_dir=image_dir,
             save_dir=save_dir
         )
-
-        # 缓存到内存
-        global _sknn_encrypted_db
-        _sknn_encrypted_db = {
-            'features': db_features,
-            'image_names': db_images,
-            'service': service
-        }
 
         return {
             "status": "success",
@@ -260,23 +236,15 @@ async def load_sknn_database(
     db_dir: str = Query(..., description="数据库目录")
 ) -> Dict[str, Any]:
     """加载已存在的 SkNN 加密数据库。"""
-    from cirtorch.services.sknn_service import SknnService
+    service = get_cir_service()
 
     try:
-        service = SknnService(feature_dim=2048)
         service.load_database(db_dir)
-
-        global _sknn_encrypted_db
-        _sknn_encrypted_db = {
-            'features': service.db_features,
-            'image_names': service.db_image_names,
-            'service': service
-        }
 
         return {
             "status": "success",
-            "database_size": len(service.db_image_names),
-            "feature_shape": list(service.db_features.shape)
+            "database_size": service.get_index_size(),
+            "feature_shape": list(service.db_features.shape) if service.db_features else None
         }
 
     except Exception as e:
@@ -293,10 +261,10 @@ async def sknn_search(
 
     使用加密查询在加密数据库中搜索，服务器无法获取明文特征。
     """
-    if _sknn_encrypted_db is None:
-        raise HTTPException(status_code=400, detail="加密数据库未加载")
+    service = get_cir_service()
 
-    service = _sknn_encrypted_db['service']
+    if not service.is_indexed:
+        raise HTTPException(status_code=400, detail="加密数据库未加载")
 
     try:
         results = service.search(
@@ -307,7 +275,7 @@ async def sknn_search(
         return {
             "status": "success",
             "use_encrypted": True,
-            "results": results
+            "results": [r.__dict__ for r in results]
         }
 
     except Exception as e:
@@ -325,23 +293,31 @@ async def sknn_search_upload(
 
     用户上传图像，服务器在加密数据库中搜索相似图像。
     """
-    if _sknn_encrypted_db is None:
+    service = get_cir_service()
+
+    if not service.is_indexed:
         raise HTTPException(status_code=400, detail="加密数据库未加载")
 
-    service = _sknn_encrypted_db['service']
-
     try:
-        # 读取图像
+        # 保存上传的图像到临时文件
+        import tempfile
         image_bytes = await image.read()
-        img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+
+        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+            tmp.write(image_bytes)
+            tmp_path = tmp.name
 
         # 执行检索
-        results = service.search_by_image(img, top_k=top_k)
+        results = service.search(query_image_path=tmp_path, top_k=top_k)
+
+        # 清理临时文件
+        import os
+        os.unlink(tmp_path)
 
         return {
             "status": "success",
             "use_encrypted": True,
-            "results": results
+            "results": [r.__dict__ for r in results]
         }
 
     except Exception as e:
@@ -349,32 +325,107 @@ async def sknn_search_upload(
         raise HTTPException(status_code=500, detail=f"检索失败：{str(e)}")
 
 
+@router.post("/search/upload")
+async def cir_search_upload(
+    image: UploadFile = File(..., description="查询图像"),
+    top_k: int = Query(default=10, ge=1, le=100)
+) -> Dict[str, Any]:
+    """
+    明文 CNN 图像检索（文件上传模式）。
+
+    不使用加密，直接计算特征相似度进行检索。
+    适用于对隐私保护没有要求的场景。
+    """
+    service = get_cir_service()
+
+    if not service.is_indexed:
+        raise HTTPException(status_code=400, detail="数据库未加载，请先加载或构建数据库")
+
+    try:
+        # 保存上传的图像到临时文件
+        import tempfile
+        image_bytes = await image.read()
+
+        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+            tmp.write(image_bytes)
+            tmp_path = tmp.name
+
+        # 执行明文检索
+        results = service.search(query_image_path=tmp_path, top_k=top_k)
+
+        # 清理临时文件
+        import os
+        os.unlink(tmp_path)
+
+        return {
+            "status": "success",
+            "use_encrypted": False,
+            "results": [r.__dict__ for r in results]
+        }
+
+    except Exception as e:
+        logger.error(f"明文检索失败：{str(e)}")
+        raise HTTPException(status_code=500, detail=f"检索失败：{str(e)}")
+
+
 @router.get("/sknn/status")
 async def get_sknn_status() -> Dict[str, Any]:
     """获取 SkNN 服务状态。"""
-    global _sknn_service, _sknn_encrypted_db
-
-    status = {
-        "keys_generated": _sknn_service is not None and _sknn_service.M1 is not None,
-        "database_loaded": _sknn_encrypted_db is not None,
-        "database_size": len(_sknn_encrypted_db['image_names']) if _sknn_encrypted_db else 0
-    }
-
-    if _sknn_service:
-        status.update(_sknn_service.get_status())
-
-    return status
+    service = get_cir_service()
+    return service.get_status()
 
 
 @router.post("/sknn/verify")
 async def verify_encryption() -> Dict[str, Any]:
     """验证 SkNN 加密的内积保持性。"""
-    if _sknn_service is None:
-        _sknn_service = ASPEForCNN()
-
-    result = _sknn_service.verify_inner_product_preservation(num_samples=10)
+    aspe = ASPEForCNN()
+    result = aspe.verify_inner_product_preservation(num_samples=10)
 
     return {
         "status": "success",
         "verification": result
     }
+
+
+@router.get("/sknn/database/info")
+async def get_database_info() -> Dict[str, Any]:
+    """
+    获取加密数据库详细信息。
+
+    返回数据库中的图像列表和元数据。
+    """
+    service = get_cir_service()
+    status = service.get_status()
+
+    if not status.get("indexed"):
+        return {
+            "loaded": False,
+            "message": "数据库未加载，请先加载或构建数据库"
+        }
+
+    return {
+        "loaded": True,
+        "database_size": status.get("index_size", 0),
+        "feature_shape": [2 * service.feature_dim, status.get("index_size", 0)] if service.db_features else None,
+        "images": service.db_image_names[:20] if service.db_image_names else [],
+        "total_images": len(service.db_image_names) if service.db_image_names else 0
+    }
+
+
+@router.post("/sknn/database/load-demo")
+async def load_demo_database() -> Dict[str, Any]:
+    """
+    加载演示数据库。
+
+    如果演示数据库不存在，返回提示信息。
+    """
+    demo_db_path = Path('data/cir_demo_db')
+
+    if not demo_db_path.exists():
+        return {
+            "status": "error",
+            "message": "演示数据库不存在，请先运行构建脚本",
+            "hint": "运行: python scripts/build_cir_demo_db.py --image-dir <图像目录> --save-dir data/cir_demo_db"
+        }
+
+    return await load_sknn_database(str(demo_db_path))

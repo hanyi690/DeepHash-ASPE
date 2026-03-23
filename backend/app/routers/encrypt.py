@@ -15,6 +15,8 @@ from app.schemas.search import (
 )
 from app.services.aspe_service import get_aspe_service
 from app.services.dcmh_service import get_dcmh_service
+from app.services.dataset_service import get_dataset_service
+from app.services.hash_cache_service import get_hash_cache_service
 
 router = APIRouter(prefix="/api/encrypt", tags=["encrypt"])
 
@@ -81,34 +83,26 @@ async def generate_trapdoor(request: TrapdoorRequest):
 
 @router.post("/build-database")
 async def build_encrypted_database():
-    """构建加密检索数据库（使用 COCO 数据集）。"""
+    """构建加密检索数据库（使用 Flickr25K 数据集）。"""
     try:
-        from app.services.coco_service import get_coco_service
-
-        coco_service = get_coco_service()
         dcmh_service = get_dcmh_service()
         aspe_service = get_aspe_service()
+        hash_cache = get_hash_cache_service()
+        dataset_service = get_dataset_service()
 
-        # 获取检索数据
-        retrieval_data = coco_service.get_retrieval_data(limit=100)
+        # 构建数据库缓存
+        database_codes, database_labels = hash_cache.build_database_cache(
+            dcmh_service, dataset_service, batch_size=32, force_rebuild=False
+        )
 
-        # 生成图像哈希码
-        # 这里简化处理，实际应该遍历所有图像
-        import torch
-        num_images = retrieval_data['num_images']
-
-        # 生成随机哈希码用于演示（实际应该使用真实图像）
-        demo_hash_codes = np.sign(np.random.randn(num_images, dcmh_service.bit_dim))
-        labels = np.array(retrieval_data['labels'])
-
-        # 加密
-        aspe_service.encrypt_database(demo_hash_codes, labels)
+        # 构建加密缓存
+        hash_cache.build_encrypted_cache(aspe_service, force_rebuild=False)
 
         return {
             "success": True,
-            "num_images": num_images,
+            "num_images": database_codes.shape[0],
             "bit_dim": dcmh_service.bit_dim,
-            "message": f"成功构建包含 {num_images} 个图像的加密数据库"
+            "message": f"成功构建包含 {database_codes.shape[0]} 个图像的加密数据库"
         }
 
     except Exception as e:

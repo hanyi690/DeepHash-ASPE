@@ -16,7 +16,7 @@ from app.schemas.search import (
 )
 from app.services.aspe_service import get_aspe_service
 from app.services.dcmh_service import get_dcmh_service
-from app.services.coco_service import get_coco_service
+from app.services.dataset_service import get_dataset_service
 
 router = APIRouter(prefix="/api/metrics", tags=["metrics"])
 
@@ -33,7 +33,6 @@ async def get_metrics(k: int = None, num_queries: int = 100):
 
         aspe_service = get_aspe_service()
         dcmh_service = get_dcmh_service()
-        coco_service = get_coco_service()
 
         # 检查数据库是否已构建
         if aspe_service.encrypted_database is None:
@@ -171,11 +170,10 @@ async def get_system_status():
     try:
         aspe_service = get_aspe_service()
         dcmh_service = get_dcmh_service()
-        coco_service = get_coco_service()
+        dataset_service = get_dataset_service()
 
-        # COCO 状态
-        coco_status = coco_service.get_dataset_statistics()
-        coco_status["loaded"] = coco_service.images_data is not None
+        # 数据集状态
+        dataset_status = dataset_service.get_status()
 
         return SystemStatus(
             success=True,
@@ -185,7 +183,7 @@ async def get_system_status():
                 "models_loaded": True
             },
             aspe_status=aspe_service.get_status(),
-            coco_status=coco_status
+            dataset_status=dataset_status
         )
 
     except Exception as e:

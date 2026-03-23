@@ -23,13 +23,14 @@ class DCMHConfig(object):
     query_size = 2000
     database_size = 18015
     batch_size = 128
+    num_workers = 0  # DataLoader 工作进程数
 
     # 超参数
     max_epoch = 500
     gamma = 1
     eta = 1
     bit = 64  # 最终二进制码长度
-    lr = 10 ** (-1.5)  # 初始学习率
+    lr = 10 ** (-1.5)  # 初始学习率 ≈ 0.0316，与 reference/DCMH 一致
 
     # 设备参数
     use_gpu = True
@@ -42,6 +43,10 @@ class DCMHConfig(object):
 
     # 结果目录
     result_dir = 'result'
+
+    # 断点恢复配置
+    checkpoint_interval = 10  # 每 N 个 epoch 保存一次检查点
+    resume_from = None  # 从指定检查点恢复（目录路径）
 
     def parse(self, kwargs):
         """

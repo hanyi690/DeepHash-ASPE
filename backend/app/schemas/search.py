@@ -97,8 +97,11 @@ class TrapdoorResponse(BaseModel):
 
 class SearchRequest(BaseModel):
     """搜索请求。"""
-    query_type: str = Field(..., description="查询类型：text 或 image")
-    query_text: Optional[str] = None
+    query_type: str = Field(
+        default="label_to_image",
+        description="查询类型：label_to_image | image_to_label | image_to_image"
+    )
+    label_indices: List[int] = Field(default=[], description="用户选择的标签索引")
     query_image: Optional[str] = None
     top_k: int = Field(default=10, ge=1, le=100)
     use_encrypted: bool = Field(default=True, description="是否使用加密检索")
@@ -110,21 +113,43 @@ class SearchResult(BaseModel):
     image_id: int
     score: float
     distance: float
-    captions: List[str] = []
+    labels: List[int] = []  # 该图像的标签索引列表
     thumbnail_url: Optional[str] = None
+    hash_code: Optional[List[int]] = None  # 哈希码展示
+
+
+class ImageToLabelResult(BaseModel):
+    """图像→标签检索结果。"""
+    rank: int
+    image_id: int  # 来源图像ID
+    labels: List[int]  # 标签索引
+    score: float
+    distance: float
+
+
+class EncryptionInfo(BaseModel):
+    """加密状态信息。"""
+    method: str = "ASPE Scheme 1"
+    query_encrypted: bool = False
+    database_encrypted: bool = False
+    security_level: int = 2
+    bit_dim: int = 64
 
 
 class SearchResponse(BaseModel):
     """搜索响应。"""
     success: bool
     query_type: str
-    query_text: Optional[str] = None
-    results: List[SearchResult]
+    label_indices: List[int] = []
+    results: List[SearchResult] = []  # T2I/I2I 返回图像结果
+    label_results: List["ImageToLabelResult"] = []  # I2T 返回标签结果
     total_results: int
     search_time_ms: float
     plaintext_map: Optional[float] = None
     ciphertext_map: Optional[float] = None
     map_difference: Optional[float] = None
+    encryption_info: Optional[EncryptionInfo] = None  # 新增加密信息
+    query_hash_code: Optional[List[int]] = None  # 查询哈希码
 
 
 # ============== 指标相关模式 ==============
@@ -154,4 +179,14 @@ class SystemStatus(BaseModel):
     success: bool
     dcmh_status: Dict[str, Any]
     aspe_status: Dict[str, Any]
-    coco_status: Dict[str, Any]
+    dataset_status: Dict[str, Any]
+
+
+# ============== 标签相关模式 ==============
+
+class LabelsResponse(BaseModel):
+    """标签列表响应。"""
+    success: bool
+    total: int
+    label_dim: int  # 标签向量维度 (1386 for Flickr25K)
+    message: str = "标签列表获取成功"
