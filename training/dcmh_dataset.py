@@ -47,6 +47,15 @@ class DCMHImageDataset(Dataset):
         return len(self.h5_file['images'])
 
     def __getitem__(self, idx):
+        # 类型验证
+        if not isinstance(idx, (int, np.integer)):
+            raise TypeError(f"indices must be integer, got {type(idx).__name__}")
+
+        # 范围验证
+        dataset_len = len(self)
+        if idx < 0 or idx >= dataset_len:
+            raise IndexError(f"index {idx} out of range [0, {dataset_len})")
+
         # 获取实际索引
         if self.indices is not None:
             actual_idx = self.indices[idx]
@@ -54,21 +63,15 @@ class DCMHImageDataset(Dataset):
             actual_idx = idx
 
         # 读取图像
-        img_bytes = self.h5_file['images'][actual_idx]
+        # h5 中的图像是 int8 数组 [3, H, W]，范围约 [-42, 127]
+        # 需要直接转换为 float32，保留原始数值
+        img_data = self.h5_file['images'][actual_idx]
 
-        # h5 中的图像是 RGB 数组 [3, H, W]
-        if isinstance(img_bytes, np.ndarray):
-            # 直接是 numpy 数组
-            img = img_bytes.transpose(1, 2, 0)  # [3, H, W] -> [H, W, 3]
-        else:
-            # 需要解码
-            img = Image.open(io.BytesIO(img_bytes))
+        # 直接转为 float32 tensor，保留原始数值
+        # 形状：[3, H, W] -> 不需要 transpose
+        img = torch.from_numpy(img_data.astype('float32'))
 
-        # 转换为 PIL Image（如果是 numpy）
-        if isinstance(img, np.ndarray):
-            img = Image.fromarray(img.astype('uint8'))
-
-        # 应用变换
+        # 应用变换（如果有）
         if self.transform:
             img = self.transform(img)
 
@@ -76,8 +79,11 @@ class DCMHImageDataset(Dataset):
         return img, idx
 
     def __del__(self):
-        if self._h5_file is not None:
-            self._h5_file.close()
+        try:
+            if self._h5_file is not None:
+                self._h5_file.close()
+        except Exception:
+            pass
 
 
 class DCMHTextDataset(Dataset):
@@ -85,19 +91,23 @@ class DCMHTextDataset(Dataset):
     DCMH 文本标签数据集。
 
     存储 multi-hot 标签向量。
+    注意：Reference/DCMH 不使用归一化，直接用 {0,1} 稀疏向量。
     """
 
-    def __init__(self, h5_path, indices=None):
+    def __init__(self, h5_path, indices=None, normalize=False):
         """
         初始化数据集。
 
         参数：
             h5_path: FLICKR-25K.mat 文件路径
             indices: 要使用的样本索引
+            normalize: 是否对文本特征进行零均值归一化（默认 False，与 Reference/DCMH 一致）
         """
         self.h5_path = h5_path
         self.indices = indices
+        self.normalize = normalize
         self._h5_file = None
+        self._mean = None
 
     @property
     def h5_file(self):
@@ -105,12 +115,38 @@ class DCMHTextDataset(Dataset):
             self._h5_file = h5py.File(self.h5_path, 'r')
         return self._h5_file
 
+    def _compute_mean(self):
+        """
+        计算每个标签维度的均值（零均值归一化）。
+
+        与 MATLAB 的 normZeroMean 函数一致：
+        mu = mean(X);  % 每个标签维度的出现频率
+        X = X - mu;    % 零均值化
+        """
+        if self._mean is None:
+            # 读取所有训练数据的文本特征
+            if self.indices is not None:
+                YAll = self.h5_file['YAll'][self.indices]
+            else:
+                YAll = self.h5_file['YAll'][:]
+            self._mean = YAll.mean(axis=0)  # [y_dim]
+        return self._mean
+
     def __len__(self):
         if self.indices is not None:
             return len(self.indices)
         return len(self.h5_file['YAll'])
 
     def __getitem__(self, idx):
+        # 类型验证
+        if not isinstance(idx, (int, np.integer)):
+            raise TypeError(f"indices must be integer, got {type(idx).__name__}")
+
+        # 范围验证
+        dataset_len = len(self)
+        if idx < 0 or idx >= dataset_len:
+            raise IndexError(f"index {idx} out of range [0, {dataset_len})")
+
         if self.indices is not None:
             actual_idx = self.indices[idx]
         else:
@@ -120,6 +156,11 @@ class DCMHTextDataset(Dataset):
         tags = self.h5_file['YAll'][actual_idx]
         labels = self.h5_file['LAll'][actual_idx]
 
+        # 零均值归一化（与 MATLAB 的 normZeroMean 一致）
+        if self.normalize:
+            mean = self._compute_mean()
+            tags = tags - mean
+
         # 转换为 tensor 并添加维度 [1, y_dim, 1]
         tags_tensor = torch.from_numpy(tags).float().unsqueeze(0).unsqueeze(-1)
         labels_tensor = torch.from_numpy(labels).float()
@@ -128,8 +169,11 @@ class DCMHTextDataset(Dataset):
         return tags_tensor, labels_tensor, idx
 
     def __del__(self):
-        if self._h5_file is not None:
-            self._h5_file.close()
+        try:
+            if self._h5_file is not None:
+                self._h5_file.close()
+        except Exception:
+            pass
 
 
 def create_dataloaders(h5_path, batch_size=128, num_workers=0):
@@ -146,12 +190,10 @@ def create_dataloaders(h5_path, batch_size=128, num_workers=0):
     """
     from torchvision import transforms
 
-    # 图像变换（与 reference 一致：只用 ToTensor，不做额外归一化）
-    # DCMH 模型内部 forward 会做 x - self.mean，所以直接传入 [0, 1] 范围的 tensor
-    transform = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),  # 转为 [0, 1] tensor，模型内部会减 mean
-    ])
+    # 图像变换（空变换，因为数据已经是正确的格式）
+    # h5 图像已经是 [3, 224, 224] float32，范围 [-42, 127]
+    # 模型内部会做 x - mean 归一化
+    transform = None
 
     # 数据划分索引
     query_size = 2000

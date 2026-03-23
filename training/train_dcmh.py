@@ -296,7 +296,7 @@ def train(**kwargs):
                 quantization_x = torch.sum(torch.pow(B[indices, :] - cur_f, 2))
                 balance_x = torch.sum(torch.pow(cur_f.t().mm(ones) + F_buffer[unupdated_ind].t().mm(ones_), 2))
                 loss_x = logloss_x + opt.gamma * quantization_x + opt.eta * balance_x
-                loss_x = loss_x / num_train
+                loss_x = loss_x / (batch_size * num_train)  # 与 Reference/DCMH 一致
 
             # 更新 F_buffer（在 autocast 外，确保 float32）
             F_buffer[indices, :] = cur_f.float().data
@@ -338,7 +338,7 @@ def train(**kwargs):
                 quantization_y = torch.sum(torch.pow(B[ind, :] - cur_g, 2))
                 balance_y = torch.sum(torch.pow(cur_g.t().mm(ones) + G_buffer[unupdated_ind].t().mm(ones_), 2))
                 loss_y = logloss_y + opt.gamma * quantization_y + opt.eta * balance_y
-                loss_y = loss_y / num_train
+                loss_y = loss_y / (batch_size * num_train)  # 与 Reference/DCMH 一致
 
             # 更新 G_buffer（在 autocast 外，确保 float32）
             G_buffer[ind, :] = cur_g.float().data
