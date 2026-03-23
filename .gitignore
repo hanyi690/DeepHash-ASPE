@@ -60,3 +60,9 @@ results/*.json
 .coverage
 htmlcov/
 .pytest_cache/
+
+# Node.js / Next.js
+node_modules/
+.next/
+frontend/node_modules/
+frontend/.next/
