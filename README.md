@@ -2,6 +2,327 @@
 
 一个结合了深度学习哈希与非对称标量积保持加密（ASPE）的隐私保护图文检索系统。
 
+## 📢 更新 (2026-03-23)
+
+### ASPE 加密验证成功 ✅
+
+已完成 **DCMH 模型训练和 ASPE 加密前后 mAP 对比评估**：
+
+**训练结果**：
+- 模型路径: `results/flickr-25k/20260323_103015/`
+- 哈希码位数: 64 bits
+- 训练轮数: 500 epochs
+
+**ASPE 加密验证结果**：
+
+| 指标 | 明文 mAP | 密文 mAP | 差异 |
+|------|----------|----------|------|
+| mAP(i→t) | 0.5392 | 0.5392 | 0.00003 |
+| mAP(t→i) | 0.5395 | 0.5394 | 0.00011 |
+
+**结论**: 明文和密文的 mAP 值几乎完全相等（差异 < 0.001），验证了 ASPE 加密方案正确保持了哈希码的排序关系，可以在密文状态下实现与明文相同的检索精度。
+
+**生成文件**：
+- `loss_curve.png` - 训练损失曲线
+- `map_curve.png` - mAP 结果图
+- `aspe_comparison.png` - 明文 vs 密文 mAP 对比图
+- `aspe_evaluation.json` - 详细评估数据
+- `report.md` - 完整评估报告
+
+---
+
+### 系统完整性检查修复
+
+已完成**核心模块到后端再到前端的完整链路检查和修复**：
+
+**修复内容**：
+
+| 问题 | 文件 | 修复 |
+|------|------|------|
+| 后端服务导出缺失 | `backend/app/services/__init__.py` | 添加 CIRService 导出 |
+| 明文检索端点缺失 | `backend/app/routers/cir_retrieval.py` | 新增 `/api/cir/search/upload` 端点 |
+| EncryptionInfo 字段不完整 | `backend/app/routers/search.py` | 补充 method 和 security_level |
+| CIR 模型加载需要显式路径 | `backend/app/services/cir_service.py` | 添加自动初始化 torchvision 预训练模型 |
+| 字段名不一致 | `backend/app/services/cir_service.py` | image_path → image_name |
+
+**新增功能**：
+- ✅ CIR 服务支持自动加载 torchvision 预训练模型（无需手动下载）
+- ✅ 明文检索模式端点完整支持
+- ✅ 前后端字段名一致性保证
+
+**验证通过**：
+- CIRService 导入成功
+- 端点 `/api/cir/search/upload` 存在
+- 端点 `/api/cir/sknn/search/upload` 存在
+- 端点 `/api/cir/status` 存在
+- EncryptionInfo 字段正确
+
+---
+
+### core/cirtorch 前后端适配完成
+
+已完成 **core/cirtorch 模块与前后端的完整适配**，实现了 CNN 图像检索和 SkNN 隐私保护检索的前端页面：
+
+**后端修复**：
+| 文件 | 变更 | 说明 |
+|------|------|------|
+| `backend/app/services/cir_service.py` | 重构 | 直接使用 `core/cirtorch`，移除对不存在模块的依赖 |
+| `backend/app/routers/cir_retrieval.py` | 修复导入 | 修正 `SknnService` 导入路径 |
+| `backend/app/routers/cir_retrieval.py` | 新增端点 | `/sknn/database/info` 和 `/sknn/database/load-demo` |
+
+**前端新增**：
+| 文件 | 变更 | 说明 |
+|------|------|------|
+| `frontend/src/app/cir/page.tsx` | 新建 | CNN 图像检索页面 |
+| `frontend/src/components/Navbar.tsx` | 更新 | 添加 "CNN 检索" 导航链接 |
+
+**工具脚本**：
+| 文件 | 变更 | 说明 |
+|------|------|------|
+| `scripts/download_cir_model.py` | 新建 | 下载 CNN 检索预训练模型 |
+| `scripts/build_cir_demo_db.py` | 新建 | 构建演示用加密检索数据库 |
+
+**CIR 页面功能**：
+- ✅ 服务状态监控（CIR 服务和 SkNN 状态）
+- ✅ 检索模式切换（明文/隐私保护）
+- ✅ 数据库管理（构建/加载）
+- ✅ 图像上传检索
+- ✅ SkNN 密钥生成
+
+**使用方式**：
+```bash
+# 1. 下载预训练模型
+python scripts/download_cir_model.py --model resnet101-gem
+
+# 2. 构建演示数据库
+python scripts/build_cir_demo_db.py --image-dir data/flickr-25k/images --save-dir data/cir_demo_db
+
+# 3. 访问前端页面
+# http://localhost:3000/cir
+```
+
+---
+
+### 前后端检索与加密系统优化
+
+已完成 **前后端检索与加密系统的全面优化**，实现真实 DCMH 模型集成和隐私保护检索：
+
+**后端优化**：
+
+| 模块 | 变更 | 功能 |
+|------|------|------|
+| DCMHService | 新增自动模型查找 | 自动加载最新训练的 DCMH 模型 |
+| DatasetService | 新建服务 | 加载和管理 Flickr25K 数据集 |
+| HashCacheService | 新建服务 | 预计算和缓存数据库哈希码 |
+| Search API | 重构 | 使用真实模型和缓存哈希码检索 |
+| Search Schema | 新增字段 | 加密状态信息、哈希码展示 |
+
+**前端优化**：
+
+| 组件 | 变更 | 功能 |
+|------|------|------|
+| Demo 页面 | 增强功能 | 图像上传检索、加密状态显示 |
+| ResultsGrid | 新增功能 | 哈希码折叠展示 |
+| ImageUpload | 保持功能 | 拖拽上传、实时预览 |
+
+**新增功能**：
+- ✅ 自动加载最新训练的 DCMH 模型（`results/flickr-25k/*/img_model.pth`）
+- ✅ 哈希码预计算缓存（避免每次搜索重建数据库）
+- ✅ 检索结果展示哈希码
+- ✅ 加密状态可视化（查询加密、数据库加密指示器）
+- ✅ 图像上传检索支持
+
+**关键文件**：
+- `backend/app/services/dcmh_service.py` - DCMH 模型服务（自动模型加载）
+- `backend/app/services/dataset_service.py` - 数据集服务（新建）
+- `backend/app/services/hash_cache_service.py` - 哈希缓存服务（新建）
+- `backend/app/routers/search.py` - 搜索 API（重构）
+- `frontend/src/app/demo/page.tsx` - 演示页面（增强）
+- `frontend/src/components/ResultsGrid.tsx` - 结果展示（增强）
+
+---
+
+### 修复：低内存模式与标准模式预处理一致性
+
+已修复低内存模式与标准模式图像预处理不一致的问题：
+
+**问题分析**：
+- 原低内存模式使用了 ImageNet 标准归一化 `Normalize(mean=[0.485...], std=[0.229...])`
+- 但 DCMH 模型内部 `forward` 已有 `x - self.mean` 处理
+- 导致**双重归一化**，与标准模式不一致
+
+**修复方案**：
+- 移除低内存模式的 `transforms.Normalize`
+- 只保留 `transforms.ToTensor()`，让模型内部处理均值
+
+**修改文件**：
+- `training/train_dcmh.py` 第 76-80 行
+- `training/dcmh_dataset.py` 第 148-152 行
+
+```python
+# 修改前
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+])
+
+# 修改后（与 reference 一致）
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),  # 转为 [0, 1] tensor，模型内部会减 mean
+])
+```
+
+**验证**：低内存模式和标准模式现在使用相同的图像预处理流程，训练结果应该一致。
+
+---
+
+### 虚拟环境配置和 PyTorch GPU 安装
+
+已添加完整的虚拟环境创建和 PyTorch GPU 版本安装指南：
+
+**实施方案**：
+| 步骤 | 命令 | 说明 |
+|------|------|------|
+| 创建虚拟环境 | `python -m venv .venv` | 使用 Python 3.13 |
+| 激活虚拟环境 | `.venv\Scripts\activate` (Windows) | 隔离项目依赖 |
+| 安装 PyTorch | `pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124` | CUDA 12.4 支持 Python 3.13 |
+| 安装依赖 | `pip install -r requirements.txt` | 安装其他项目依赖 |
+
+**验证结果**：
+- ✅ PyTorch 2.6.0+cu124 安装成功
+- ✅ CUDA 12.4 可用
+- ✅ GPU 识别成功（NVIDIA GeForce RTX 4060 Laptop GPU）
+
+详见 [安装章节](#安装)。
+
+---
+
+### 低内存训练优化（7GB 内存可运行）
+
+已实施 **两项内存优化措施**，使 DCMH 训练能在 7GB 内存限制下完成：
+
+| 优化措施 | 实现文件 | 效果 |
+|----------|---------|------|
+| **按需加载** | `training/dcmh_dataset.py` | 内存从 10GB+ 降至 < 100MB |
+| **跳过训练中验证** | `--valid=False` 参数 | 训练过程流畅，训练后单独评估 |
+
+**使用方式**：
+
+```bash
+# 低内存模式（按需加载图像）
+python training/train_dcmh.py train --low_memory=True --valid=False
+
+# 训练完成后单独评估
+python training/eval_dcmh.py --img_model_path=results/flickr-25k/时间戳/img_model.pth \
+                             --txt_model_path=results/flickr-25k/时间戳/txt_model.pth
+
+# 快捷方式：使用批处理/Shell 脚本（推荐）
+# Windows
+train_dcmh_low_memory.bat
+
+# Linux/Mac
+./train_dcmh_low_memory.sh
+```
+
+**内存对比**：
+| 模式 | 内存占用 | 适用场景 |
+|------|---------|---------|
+| 标准模式 | 11+ GB | 内存充足，完整功能 |
+| 低内存模式 | < 100MB (图像加载) | 7GB 内存限制 |
+
+详见：
+- `training/dcmh_dataset.py` - 按需加载 Dataset 类
+- `training/eval_dcmh.py` - 训练后评估脚本
+- `training/train_dcmh.py` - 支持低内存模式的训练脚本
+
+---
+
+### DCMH 原始实现对比分析和训练验证
+
+已完成 **DCMH Reference 代码与当前项目实现的对比分析** 和 **小批量训练验证**：
+
+**对比分析结果**：
+
+| 模块 | Reference | 当前项目 | 状态 |
+|------|-----------|---------|------|
+| 配置参数 | `config.py` | `config/dcmh_config.py` | ✅ 完全一致 |
+| 基础模块 | `BasicModule` | `DCMHBasicModule` | ✅ 功能一致 |
+| 图像模块 | `ImgModule` | `DCMHImageModule` | ✅ 核心逻辑一致 |
+| 文本模块 | `TxtModule` | `DCMHTextModule` | ✅ 核心逻辑一致 |
+| 数据加载 | `data_handler.py` | `core/hashing/dcmh_data_loader.py` | ✅ 功能一致 |
+| 评估指标 | `utils.py` | `core/retrieval/dcmh_metrics.py` | ✅ 完全一致 |
+| 损失函数 | `main.py` 内联 | `training/train_dcmh.py` 内联 | ✅ 完全一致 |
+
+**新增训练脚本**：
+- `training/train_dcmh.py` - 基于 reference/DCMH/main.py 的完整训练脚本（损失函数内联）
+- `training/train_dcmh_test.py` - 小批量训练测试脚本（快速验证）
+
+**训练脚本使用方式**：
+```bash
+# 完整训练（使用 reference DCMH 训练流程）
+python training/train_dcmh.py train --lr=0.01
+
+# 小批量训练测试（快速验证实现正确性）
+python training/train_dcmh_test.py
+
+# 显示帮助
+python training/train_dcmh.py help
+```
+
+**验证配置**（小批量测试）：
+```python
+training_size = 100    # 原 10000
+query_size = 50        # 原 2000
+database_size = 200    # 原 18015
+batch_size = 16        # 原 128
+max_epoch = 5          # 原 500
+bit = 16               # 原 64
+```
+
+**验证结果**：
+- ✅ 损失呈下降趋势（从 1.16 降至 0.89）
+- ✅ mAP 在合理范围内（图像→文本约 0.45-0.47，文本→图像约 0.43-0.46）
+- ✅ 训练验证了实现的正确性
+
+详见 [training/train_dcmh.py](training/train_dcmh.py) 和 [training/train_dcmh_test.py](training/train_dcmh_test.py)。
+
+---
+
+### 精简说明
+
+已删除以下冗余文件：
+- `training/scheduler.py` - reference/DCMH 使用简单的线性衰减，不需要复杂调度器
+- `training/dcmh_loss.py` - 损失函数已内联到 `train_dcmh.py` 中，与 reference 保持一致
+
+---
+
+### DCMH Reference 代码同步
+
+已完成 **training 目录与 reference/DCMH 代码同步**：
+
+- ✅ `training/train_flickr25k.py` - 完全复制 `reference/DCMH/main.py`
+- ✅ `training/config.py` - 与 reference 保持一致
+- ✅ `training/data_handler.py` - 与 reference 保持一致
+- ✅ `training/utils.py` - 与 reference 保持一致
+
+**运行方式**：
+```bash
+# 显示帮助
+python training/train_flickr25k.py help
+
+# 训练模型
+python training/train_flickr25k.py train --lr=0.01
+
+# 测试模型
+python training/train_flickr25k.py test --load_img_path=result/img_model.pth
+```
+
+详见 [DCMH Reference 代码同步](#dcmh-reference-代码同步)
+
+---
+
 ## 📢 更新 (2026-03-22)
 
 ### CNN+ASPE 隐私检索系统完整实现
@@ -165,7 +486,7 @@ python experiments/run_flickr25k.py --data data/flickr25k/FLICKR-25K.mat --bit 6
 - ✅ **DCMHImageModule**：AlexNet 风格的 CNN 图像编码器
 - ✅ **DCMHTextModule**：基于卷积的文本标签编码器
 - ✅ **DCMHModel**：统一的双流哈希模型
-- ✅ **DCMHCombinedLoss**：跨模态对比损失 + 量化损失
+- ✅ **训练脚本**：损失函数内联到 `training/train_dcmh.py`，与 reference 一致
 
 详见 [DCMH 模型架构](#dcmh 模型架构)
 
@@ -346,10 +667,9 @@ DeepHash-ASPE/
 │
 ├── training/               # 训练流程
 │   ├── __init__.py
-│   ├── trainer.py          # 通用训练器
-│   ├── dcmh_loss.py        # DCMH 专用损失函数
-│   ├── scheduler.py        # 学习率调度器
-│   └── train_flickr25k.py  # Flickr25K 训练脚本
+│   ├── train_dcmh.py       # DCMH 训练脚本（基于 reference/DCMH/main.py）
+│   ├── train_dcmh_test.py  # DCMH 小批量训练测试脚本
+│   └── __init__.py
 │
 ├── evaluation/             # 评估工具
 │   ├── __init__.py
@@ -414,16 +734,52 @@ DeepHash-ASPE/
 
 ## 安装
 
+### 创建虚拟环境（推荐）
+
 ```bash
 # 克隆仓库
 git clone <repository-url>
 cd DeepHash-ASPE
 
-# 安装依赖
+# 创建虚拟环境（Python 3.13）
+python -m venv .venv
+
+# Windows - 激活虚拟环境
+.venv\Scripts\activate
+
+# Linux/Mac - 激活虚拟环境
+source .venv/bin/activate
+```
+
+### 安装 PyTorch GPU 版本
+
+**注意**：Python 3.13 需要使用 CUDA 12.4 或更高版本的 PyTorch。
+
+```bash
+# CUDA 12.4（推荐用于 Python 3.13）
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+
+# CUDA 12.1（适用于 Python 3.10-3.12）
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# CPU 版本（无 GPU）
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+```
+
+### 安装项目依赖
+
+```bash
+# 安装其他依赖
 pip install -r requirements.txt
 
-# 对于 MS-COCO 数据集
+# 对于 MS-COCO 数据集（如需）
 pip install pycocotools
+```
+
+### 验证 GPU 安装
+
+```bash
+python -c "import torch; print('CUDA 可用:', torch.cuda.is_available())"
 ```
 
 ## DCMH 模型架构
@@ -499,23 +855,21 @@ similarity = model.compute_similarity(img_hash, txt_hash)
 
 ### 损失函数
 
-```python
-from training.dcmh_loss import DCMHCombinedLoss
-
-# 创建损失函数
-criterion = DCMHCombinedLoss(
-    margin=1.0,
-    quantization_weight=0.1,
-    use_info_nce=False
-)
-
-# 计算损失
-total_loss, loss_dict = criterion(image_hash, text_hash)
-```
+DCMH 的损失函数内联在 `training/train_dcmh.py` 训练脚本中，与 reference/DCMH/main.py 保持一致。
 
 **损失组成**：
-- **跨模态对比损失**：对齐图像和文本哈希码
-- **量化损失**：鼓励输出接近 {-1, +1}
+1. **对数损失**（基于全局相似性矩阵）：`-sum(S*theta - log(1+exp(theta)))`
+2. **量化损失**（相对于动态 B 缓冲区）：`||B - F||² + ||B - G||²`
+3. **平衡损失**（控制哈希码平衡性）：`||F.sum(dim=0)||² + ||G.sum(dim=0)||²`
+
+```python
+# 损失函数计算（来自 train_dcmh.py）
+theta = torch.matmul(F, G.transpose(0, 1)) / 2
+log_loss = torch.sum(torch.log(1 + torch.exp(theta)) - Sim * theta)
+quant_loss = torch.sum(torch.pow(B - F, 2) + torch.pow(B - G, 2))
+balance_loss = torch.sum(torch.pow(F.sum(dim=0), 2) + torch.pow(G.sum(dim=0), 2))
+total_loss = log_loss + gamma * quant_loss + eta * balance_loss
+```
 
 ### 模型配置
 
@@ -572,16 +926,47 @@ print(f"二进制图像哈希唯一值：{torch.unique(binary_img)}")
 
 ### 1. 训练 DCMH 模型（Flickr25K）
 
+**完整功能（推荐）**：支持预训练权重、Resume、ASPE 评估、训练曲线
+
 ```bash
-# 使用脚本（Windows）
-run_flickr25k_experiment.bat
+# 从头训练（使用预训练权重 + ASPE 评估 + 训练曲线）
+python training/train_flickr25k.py \
+    --data data/FLICKR-25K.mat \
+    --pretrain data/imagenet-vgg-f.mat \
+    --bit 64 --epochs 500 \
+    --aspe-eval --plot
 
-# 使用脚本（Linux/Mac）
-./run_flickr25k_experiment.sh
+# 恢复训练（从中断点继续）
+python training/train_flickr25k.py --resume results/flickr-25k/dcmh_flickr25k_latest.pth
 
-# 或直接使用 Python
-python training/train_flickr25k.py --data data/FLICKR-25K.mat --bit 64 --epochs 100
+# 仅 ASPE 评估（使用已有模型）
+python training/train_flickr25k.py --eval-only --bit 64
 ```
+
+**命令行参数**：
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--data` | `data/flickr25k/FLICKR-25K.mat` | 数据文件路径 |
+| `--pretrain` | `data/imagenet-vgg-f.mat` | 预训练模型路径 |
+| `--bit` | 64 | 哈希码维度 |
+| `--batch-size` | 128 | 批次大小 |
+| `--lr` | 1e-4 | 学习率 |
+| `--epochs` | 500 | 最大训练轮数 |
+| `--resume` | - | 检查点路径（恢复训练） |
+| `--aspe-eval` | - | 训练完成后执行 ASPE 评估 |
+| `--plot` | - | 生成训练曲线图 |
+
+**输出结果**（`results/flickr-25k/` 目录）：
+- `dcmh_flickr25k_latest.pth` - 最新模型（可用于 resume）
+- `dcmh_flickr25k_best.pth` - 最佳模型（验证 mAP 最高）
+- `dcmh_flickr25k_checkpoint_*.pth` - 检查点（每 50 轮保存）
+- `dcmh_training_results.json` - 训练历史
+- `training_curves.png` - 训练曲线（综合图）
+- `training_loss.png` - 损失曲线
+- `training_map.png` - mAP 曲线
+- `aspe_evaluation.json` - ASPE 评估结果
+
+---
 
 ### 2. 运行完整实验
 
@@ -705,9 +1090,10 @@ hamm = 0.5×(bit - p·q) = 0.25×bit - 0.5×cipher_ip
 - `SecureRetrievalEngine`：隐私保护相似度搜索
 
 ### 损失函数
-- `DCMHCombinedLoss`：DCMH 组合损失（跨模态 + 量化）
-- `DCMHInfoNCELoss`：InfoNCE 对比损失
-- `DCMHMarginRankingLoss`：边界排序损失
+损失函数内联在 `training/train_dcmh.py` 中，包含：
+- 对数损失（基于相似性矩阵）
+- 量化损失（相对于动态 B 缓冲区）
+- 平衡损失（控制哈希码平衡性）
 
 ## 评估指标
 

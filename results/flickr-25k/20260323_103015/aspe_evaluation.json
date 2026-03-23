@@ -1,0 +1,12 @@
+{
+  "bit": 64,
+  "plaintext": {
+    "map_i2t": 0.5391746163368225,
+    "map_t2i": 0.5394937992095947
+  },
+  "ciphertext": {
+    "map_i2t": 0.5392053127288818,
+    "map_t2i": 0.5393834114074707
+  },
+  "consistency_verified": false
+}
