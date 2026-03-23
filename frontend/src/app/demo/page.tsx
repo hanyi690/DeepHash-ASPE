@@ -1,23 +1,94 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import axios from 'axios';
 import ResultsGrid from '@/components/ResultsGrid';
+import ImageUpload from '@/components/ImageUpload';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
+interface SearchResult {
+  rank: number;
+  image_id: number;
+  score: number;
+  distance: number;
+  labels: number[];
+  thumbnail_url?: string;
+  hash_code?: number[];
+}
+
+interface EncryptionInfo {
+  method: string;
+  query_encrypted: boolean;
+  database_encrypted: boolean;
+  security_level: number;
+  bit_dim: number;
+}
+
+interface SearchResponse {
+  success: boolean;
+  query_type: string;
+  label_indices?: number[];
+  results: SearchResult[];
+  total_results: number;
+  search_time_ms: number;
+  encryption_info?: EncryptionInfo;
+  query_hash_code?: number[];
+}
+
 export default function DemoPage() {
-  const [queryType, setQueryType] = useState<'text' | 'image'>('text');
-  const [queryText, setQueryText] = useState('');
+  const [queryType, setQueryType] = useState<'label' | 'image'>('label');
+  const [selectedLabels, setSelectedLabels] = useState<number[]>([]);
+  const [labelInput, setLabelInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<any[]>([]);
+  const [results, setResults] = useState<SearchResult[]>([]);
   const [searchTime, setSearchTime] = useState(0);
   const [error, setError] = useState('');
+  const [encryptionInfo, setEncryptionInfo] = useState<EncryptionInfo | null>(null);
+  const [queryHashCode, setQueryHashCode] = useState<number[] | null>(null);
+  const [uploadedImage, setUploadedImage] = useState<string | null>(null);
+  const [topLabels, setTopLabels] = useState<{index: number; count: number}[]>([]);
+
+  // 获取标签信息
+  useEffect(() => {
+    const fetchLabelStats = async () => {
+      try {
+        const response = await axios.get(`${API_BASE}/api/labels/stats`);
+        if (response.data.success) {
+          setTopLabels(response.data.top_labels || []);
+        }
+      } catch (err) {
+        console.error('获取标签信息失败:', err);
+      }
+    };
+    fetchLabelStats();
+  }, []);
+
+  // 解析标签输入
+  const parseLabelInput = (input: string): number[] => {
+    return input.split(',')
+      .map(s => parseInt(s.trim()))
+      .filter(n => !isNaN(n) && n >= 0);
+  };
+
+  // 切换标签选择
+  const toggleLabel = (index: number) => {
+    setSelectedLabels(prev =>
+      prev.includes(index)
+        ? prev.filter(i => i !== index)
+        : [...prev, index]
+    );
+  };
 
   const handleSearch = async () => {
-    if (queryType === 'text' && !queryText.trim()) {
-      setError('请输入查询文本');
+    if (queryType === 'label' && selectedLabels.length === 0) {
+      setError('请选择至少一个标签');
+      return;
+    }
+
+    if (queryType === 'image' && !uploadedImage) {
+      setError('请上传查询图像');
       return;
     }
 
@@ -25,15 +96,18 @@ export default function DemoPage() {
     setError('');
 
     try {
-      const response = await axios.post(`${API_BASE}/api/search`, {
+      const response = await axios.post<SearchResponse>(`${API_BASE}/api/search`, {
         query_type: queryType,
-        query_text: queryType === 'text' ? queryText : undefined,
+        label_indices: queryType === 'label' ? selectedLabels : undefined,
+        query_image: queryType === 'image' ? uploadedImage : undefined,
         top_k: 10,
         use_encrypted: true
       });
 
       setResults(response.data.results || []);
       setSearchTime(response.data.search_time_ms || 0);
+      setEncryptionInfo(response.data.encryption_info || null);
+      setQueryHashCode(response.data.query_hash_code || null);
     } catch (err: any) {
       setError(err.response?.data?.detail || '搜索失败，请重试');
     } finally {
@@ -41,12 +115,13 @@ export default function DemoPage() {
     }
   };
 
-  const sampleQueries = [
-    "A cat sitting on a chair",
-    "A dog playing in the park",
-    "A beautiful sunset over the ocean",
-    "People walking on the street"
-  ];
+  const handleImageSelected = (file: File) => {
+    console.log('图像已选择:', file.name);
+  };
+
+  const handleImageUploaded = (imageUrl: string) => {
+    setUploadedImage(imageUrl);
+  };
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -54,7 +129,7 @@ export default function DemoPage() {
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">跨模态检索演示</h1>
         <p className="text-gray-600">
-          输入文本或上传图像，系统将返回最相关的图像结果
+          选择标签索引或上传图像，系统将返回最相关的图像结果
         </p>
       </div>
 
@@ -63,18 +138,18 @@ export default function DemoPage() {
         {/* 查询类型切换 */}
         <div className="flex space-x-2 mb-6 p-1 bg-gray-100 rounded-xl w-fit">
           <button
-            onClick={() => setQueryType('text')}
+            onClick={() => setQueryType('label')}
             className={`px-4 py-2 rounded-lg font-medium transition-all duration-200 ${
-              queryType === 'text'
+              queryType === 'label'
                 ? 'bg-white text-[#6366F1] shadow-sm'
                 : 'text-gray-600 hover:text-gray-900'
             }`}
           >
             <div className="flex items-center space-x-2">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
               </svg>
-              <span>文本查询</span>
+              <span>标签查询</span>
             </div>
           </button>
           <button
@@ -95,40 +170,73 @@ export default function DemoPage() {
         </div>
 
         {/* 查询输入 */}
-        {queryType === 'text' ? (
+        {queryType === 'label' ? (
           <div>
-            <textarea
-              value={queryText}
-              onChange={(e) => setQueryText(e.target.value)}
-              placeholder="输入描述性文本，例如：A cat sitting on a chair"
-              className="input-primary mb-4 h-28 resize-none"
-            />
-            <div className="flex flex-wrap gap-2 mb-4">
-              <span className="text-sm text-gray-500 self-center">示例查询:</span>
-              {sampleQueries.map((q, i) => (
-                <button
-                  key={i}
-                  onClick={() => setQueryText(q)}
-                  className="badge-neutral hover:bg-gray-200 transition-colors cursor-pointer text-xs"
-                >
-                  {q.length > 25 ? q.substring(0, 25) + '...' : q}
-                </button>
-              ))}
+            {/* 常用标签选择 */}
+            <div className="mb-4">
+              <p className="text-sm text-gray-500 mb-2">点击选择常用标签：</p>
+              <div className="flex flex-wrap gap-2">
+                {topLabels.slice(0, 20).map((label) => (
+                  <button
+                    key={label.index}
+                    onClick={() => toggleLabel(label.index)}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 ${
+                      selectedLabels.includes(label.index)
+                        ? 'bg-[#6366F1] text-white shadow-sm'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    {label.index}
+                  </button>
+                ))}
+              </div>
             </div>
+
+            {/* 自定义标签输入 */}
+            <div className="mb-4">
+              <p className="text-sm text-gray-500 mb-2">或输入标签索引（逗号分隔）：</p>
+              <input
+                type="text"
+                value={labelInput}
+                onChange={(e) => {
+                  setLabelInput(e.target.value);
+                  setSelectedLabels(parseLabelInput(e.target.value));
+                }}
+                placeholder="例如：0, 5, 10, 20"
+                className="input-primary"
+              />
+            </div>
+
+            {/* 已选标签显示 */}
+            {selectedLabels.length > 0 && (
+              <div className="mb-4 p-3 bg-[#6366F1]/10 rounded-xl">
+                <p className="text-sm text-gray-600 mb-2">已选择 {selectedLabels.length} 个标签：</p>
+                <div className="flex flex-wrap gap-1">
+                  {selectedLabels.map((idx) => (
+                    <span
+                      key={idx}
+                      className="inline-flex items-center px-2 py-1 bg-white rounded-md text-sm"
+                    >
+                      {idx}
+                      <button
+                        onClick={() => toggleLabel(idx)}
+                        className="ml-1 text-gray-400 hover:text-red-500"
+                      >
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         ) : (
-          <div className="border-2 border-dashed border-gray-300 rounded-xl p-12 text-center hover:border-[#6366F1]/60 transition-colors">
-            <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
-              <svg className="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-            </div>
-            <p className="text-gray-600 mb-4 font-medium">点击或拖拽上传图像</p>
-            <button className="btn-primary">选择图像</button>
-            <p className="text-sm text-gray-500 mt-3">
-              （图像上传功能开发中）
-            </p>
-          </div>
+          <ImageUpload
+            onImageSelected={handleImageSelected}
+            onImageUploaded={handleImageUploaded}
+          />
         )}
 
         {/* 搜索按钮 */}
@@ -164,6 +272,60 @@ export default function DemoPage() {
           </svg>
           {error}
         </div>
+      )}
+
+      {/* 加密信息 */}
+      {encryptionInfo && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-6 p-4 bg-gradient-to-r from-[#6366F1]/10 to-[#8B5CF6]/10 border border-[#6366F1]/20 rounded-xl"
+        >
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 rounded-full bg-[#6366F1]/20 flex items-center justify-center">
+                <svg className="w-5 h-5 text-[#6366F1]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+              </div>
+              <div>
+                <p className="font-medium text-gray-800">隐私保护检索已启用</p>
+                <p className="text-sm text-gray-600">
+                  {encryptionInfo.method} · {encryptionInfo.bit_dim} 位哈希码
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center space-x-4 text-sm">
+              <div className="flex items-center space-x-1">
+                <span className={`w-2 h-2 rounded-full ${encryptionInfo.query_encrypted ? 'bg-green-500' : 'bg-gray-300'}`} />
+                <span className="text-gray-600">查询加密</span>
+              </div>
+              <div className="flex items-center space-x-1">
+                <span className={`w-2 h-2 rounded-full ${encryptionInfo.database_encrypted ? 'bg-green-500' : 'bg-gray-300'}`} />
+                <span className="text-gray-600">数据库加密</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 查询哈希码展示 */}
+          {queryHashCode && (
+            <div className="mt-4 pt-4 border-t border-[#6366F1]/20">
+              <details className="group">
+                <summary className="cursor-pointer text-sm text-gray-600 hover:text-gray-800 flex items-center">
+                  <svg className="w-4 h-4 mr-1 transform group-open:rotate-90 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                  查看查询哈希码
+                </summary>
+                <div className="mt-2 p-2 bg-white/50 rounded-lg overflow-x-auto">
+                  <code className="text-xs text-gray-700 font-mono">
+                    [{queryHashCode.slice(0, 16).join(', ')}...]
+                  </code>
+                </div>
+              </details>
+            </div>
+          )}
+        </motion.div>
       )}
 
       {/* 搜索结果 */}

@@ -8,7 +8,8 @@ export default function Navbar() {
 
   const navItems = [
     { href: '/', label: '首页', icon: HomeIcon },
-    { href: '/demo', label: '演示', icon: SearchIcon },
+    { href: '/demo', label: 'DCMH 检索', icon: SearchIcon },
+    { href: '/cir', label: 'CNN 检索', icon: CNNSearchIcon },
     { href: '/dataset', label: '数据集', icon: DatabaseIcon },
     { href: '/encrypt', label: '加密可视化', icon: LockIcon },
     { href: '/metrics', label: '指标', icon: ChartIcon },
@@ -75,6 +76,14 @@ function SearchIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+    </svg>
+  );
+}
+
+function CNNSearchIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
     </svg>
   );
 }

@@ -1,12 +1,15 @@
 'use client';
 
+import { useState } from 'react';
+
 interface SearchResult {
   rank: number;
   image_id: number;
   score: number;
   distance: number;
-  captions: string[];
+  labels: number[];
   thumbnail_url?: string;
+  hash_code?: number[];
 }
 
 interface ResultsGridProps {
@@ -15,9 +18,15 @@ interface ResultsGridProps {
 }
 
 export default function ResultsGrid({ results, searchTime }: ResultsGridProps) {
+  const [expandedHash, setExpandedHash] = useState<number | null>(null);
+
   if (results.length === 0) {
     return null;
   }
+
+  const toggleHash = (index: number) => {
+    setExpandedHash(expandedHash === index ? null : index);
+  };
 
   return (
     <div className="w-full">
@@ -100,27 +109,62 @@ export default function ResultsGrid({ results, searchTime }: ResultsGridProps) {
               </div>
             </div>
 
-            {/* 描述 */}
-            {result.captions && result.captions.length > 0 && (
+            {/* 哈希码展示 */}
+            {result.hash_code && (
+              <div className="mb-3">
+                <button
+                  onClick={(e) => { e.stopPropagation(); toggleHash(index); }}
+                  className="w-full flex items-center justify-between p-2 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+                >
+                  <div className="flex items-center space-x-2 text-xs text-gray-600">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                    </svg>
+                    <span>哈希码 ({result.hash_code.length} 位)</span>
+                  </div>
+                  <svg
+                    className={`w-4 h-4 text-gray-400 transform transition-transform ${expandedHash === index ? 'rotate-180' : ''}`}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {expandedHash === index && (
+                  <div className="mt-2 p-2 bg-gray-900 rounded-lg overflow-x-auto">
+                    <code className="text-xs text-emerald-400 font-mono whitespace-nowrap">
+                      [{result.hash_code.join(', ')}]
+                    </code>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 标签索引 */}
+            {result.labels && result.labels.length > 0 && (
               <div className="pt-3 border-t border-gray-100">
                 <p className="text-xs text-gray-500 mb-2 flex items-center">
                   <svg className="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
                   </svg>
-                  相关描述
+                  标签索引
                 </p>
-                <ul className="space-y-1.5">
-                  {result.captions.slice(0, 2).map((caption, i) => (
-                    <li key={i} className="flex items-start text-sm text-gray-600">
-                      <span className="text-[#6366F1] mr-2 mt-1 flex-shrink-0">
-                        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                        </svg>
-                      </span>
-                      <span className="line-clamp-2">{caption}</span>
-                    </li>
+                <div className="flex flex-wrap gap-1">
+                  {result.labels.slice(0, 10).map((label, i) => (
+                    <span
+                      key={i}
+                      className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs font-mono"
+                    >
+                      {label}
+                    </span>
                   ))}
-                </ul>
+                  {result.labels.length > 10 && (
+                    <span className="px-2 py-0.5 text-gray-400 text-xs">
+                      +{result.labels.length - 10} 更多
+                    </span>
+                  )}
+                </div>
               </div>
             )}
           </div>
