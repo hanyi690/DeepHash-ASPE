@@ -45,6 +45,34 @@ gnd = (query_L.mm(retrieval_L.T) > 0).float()
 
 ---
 
+### 训练优化：混合精度训练 ✅
+
+已添加混合精度训练（AMP）支持，进一步加速训练过程。
+
+**优化内容**：
+| 技术 | 说明 | 加速效果 |
+|------|------|----------|
+| 混合精度 (AMP) | FP16 前向 + FP32 梯度 | ~1.5x 训练加速 |
+| GradScaler | 自动梯度缩放，防止下溢 | 数值稳定性 |
+| torch.compile | 模型编译优化 | 仅 Linux 支持 |
+
+**配置选项**：
+```bash
+# 默认启用 AMP
+python training/train_dcmh.py train
+
+# 禁用 AMP
+python training/train_dcmh.py train --use_amp=False
+```
+
+**技术细节**：
+- 使用 `torch.amp.autocast` 自动选择 FP16/FP32
+- `GradScaler` 防止 FP16 梯度下溢
+- Buffer 更新保持 FP32 精度
+- Windows 自动跳过 `torch.compile`（需要 Triton）
+
+---
+
 ### DCMH 验证机制优化 ✅
 
 已实现间隔验证机制，替代原有的 `valid` 布尔配置：
