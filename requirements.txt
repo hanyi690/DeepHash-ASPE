@@ -27,6 +27,7 @@ tqdm>=4.62.0
 
 # Utilities
 pyyaml>=5.4.0
+fire>=0.7.0
 
 # Optional: Transformers for pre-trained text models
 # transformers>=4.10.0
