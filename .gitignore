@@ -66,3 +66,20 @@ node_modules/
 .next/
 frontend/node_modules/
 frontend/.next/
+
+# TypeScript build cache
+*.tsbuildinfo
+
+# Git rewrite temp
+.git-rewrite/
+
+# Backend cache
+backend/cache/
+
+# Large result data
+results/flickr-25k/
+results/postprocess/
+*.zip
+
+# Reference submodules (modified content)
+reference/
