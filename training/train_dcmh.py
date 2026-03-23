@@ -3,9 +3,8 @@ DCMH 训练脚本（Flickr25K）
 
 基于 reference/DCMH/main.py 实现原始 DCMH 训练流程，使用重构后的项目结构。
 
-内存优化模式（--low_memory=True）：
-- 使用 Dataset 按需加载图像，内存从 10GB+ 降至 < 100MB
-- 支持跳过训练中验证（--valid=False），训练后再单独评估
+使用 Dataset 按需加载图像，内存占用 < 100MB。
+支持跳过训练中验证（--valid=False），训练后再单独评估。
 """
 
 import sys
@@ -24,7 +23,7 @@ import os
 from datetime import datetime
 
 from config.dcmh_config import DCMHConfig
-from core.hashing.dcmh_data_loader import load_data, load_pretrain_model, split_data
+from core.hashing.dcmh_data_loader import load_pretrain_model
 from core.hashing.dcmh_image import build_dcmh_image_model
 from core.hashing.dcmh_text import build_dcmh_text_model
 from core.retrieval.dcmh_metrics import calc_map_k
@@ -32,8 +31,6 @@ from core.retrieval.dcmh_metrics import calc_map_k
 
 class TrainConfig(DCMHConfig):
     """训练配置（扩展自 DCMHConfig）"""
-    # 内存优化选项
-    low_memory = False  # 启用低内存模式（使用 Dataset 按需加载）
 
     # 数据加载优化
     # Windows 上 num_workers > 0 可能导致共享内存错误，默认使用 0
@@ -73,95 +70,51 @@ def train(**kwargs):
     train_y = query_y = retrieval_y = None
     num_train = 0
 
-    # ========== 数据加载模式 ==========
-    if opt.low_memory:
-        # 模式 2：低内存模式（使用 Dataset 按需加载）
-        print("\n低内存模式：使用 Dataset 按需加载图像")
-        from training.dcmh_dataset import DCMHImageDataset, DCMHTextDataset
-        from torchvision import transforms
+    # ========== 数据加载 ==========
+    print("\n使用 Dataset 按需加载图像")
+    from training.dcmh_dataset import DCMHImageDataset, DCMHTextDataset
 
-        # 图像变换（与 reference 一致：只用 ToTensor，不做额外归一化）
-        # DCMH 模型内部 forward 会做 x - self.mean，所以直接传入 [0, 1] 范围的 tensor
-        transform = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),  # 转为 [0, 1] tensor，模型内部会减 mean
-        ])
+    # 数据划分索引
+    query_indices = np.arange(0, opt.query_size)
+    train_indices = np.arange(opt.query_size, opt.query_size + opt.training_size)
+    retrieval_indices = np.arange(opt.query_size, opt.query_size + opt.database_size)
 
-        # 数据划分索引
-        query_indices = np.arange(0, opt.query_size)
-        train_indices = np.arange(opt.query_size, opt.query_size + opt.training_size)
-        retrieval_indices = np.arange(opt.query_size, opt.query_size + opt.database_size)
+    # 创建 Dataset（图像已经是 tensor 格式，不需要额外 transform）
+    train_img_dataset = DCMHImageDataset(opt.data_path, train_indices)
+    query_img_dataset = DCMHImageDataset(opt.data_path, query_indices)
+    retrieval_img_dataset = DCMHImageDataset(opt.data_path, retrieval_indices)
 
-        # 创建 Dataset
-        train_img_dataset = DCMHImageDataset(opt.data_path, train_indices, transform)
-        query_img_dataset = DCMHImageDataset(opt.data_path, query_indices, transform)
-        retrieval_img_dataset = DCMHImageDataset(opt.data_path, retrieval_indices, transform)
+    train_txt_dataset = DCMHTextDataset(opt.data_path, train_indices)
+    query_txt_dataset = DCMHTextDataset(opt.data_path, query_indices)
+    retrieval_txt_dataset = DCMHTextDataset(opt.data_path, retrieval_indices)
 
-        train_txt_dataset = DCMHTextDataset(opt.data_path, train_indices)
-        query_txt_dataset = DCMHTextDataset(opt.data_path, query_indices)
-        retrieval_txt_dataset = DCMHTextDataset(opt.data_path, retrieval_indices)
-
-        # 创建 DataLoader
-        train_img_loader = DataLoader(train_img_dataset, batch_size=opt.batch_size,
-                                      shuffle=True, num_workers=opt.num_workers,
-                                      pin_memory=opt.pin_memory)
-        query_img_loader = DataLoader(query_img_dataset, batch_size=opt.batch_size,
+    # 创建 DataLoader
+    train_img_loader = DataLoader(train_img_dataset, batch_size=opt.batch_size,
+                                  shuffle=True, num_workers=opt.num_workers,
+                                  pin_memory=opt.pin_memory)
+    query_img_loader = DataLoader(query_img_dataset, batch_size=opt.batch_size,
+                                  shuffle=False, num_workers=opt.num_workers,
+                                  pin_memory=opt.pin_memory)
+    retrieval_img_loader = DataLoader(retrieval_img_dataset, batch_size=opt.batch_size,
                                       shuffle=False, num_workers=opt.num_workers,
                                       pin_memory=opt.pin_memory)
-        retrieval_img_loader = DataLoader(retrieval_img_dataset, batch_size=opt.batch_size,
-                                          shuffle=False, num_workers=opt.num_workers,
-                                          pin_memory=opt.pin_memory)
 
-        # 获取 y_dim
-        y_dim = train_txt_dataset.h5_file['YAll'].shape[1]
+    # 获取 y_dim
+    y_dim = train_txt_dataset.h5_file['YAll'].shape[1]
 
-        # 加载标签
-        train_L = torch.from_numpy(train_txt_dataset.h5_file['LAll'][train_indices]).float()
-        query_L = torch.from_numpy(query_txt_dataset.h5_file['LAll'][query_indices]).float()
-        retrieval_L = torch.from_numpy(retrieval_txt_dataset.h5_file['LAll'][retrieval_indices]).float()
+    # 加载标签
+    train_L = torch.from_numpy(train_txt_dataset.h5_file['LAll'][train_indices]).float()
+    query_L = torch.from_numpy(query_txt_dataset.h5_file['LAll'][query_indices]).float()
+    retrieval_L = torch.from_numpy(retrieval_txt_dataset.h5_file['LAll'][retrieval_indices]).float()
 
-        train_y = torch.from_numpy(train_txt_dataset.h5_file['YAll'][train_indices]).float()
-        query_y = torch.from_numpy(query_txt_dataset.h5_file['YAll'][query_indices]).float()
-        retrieval_y = torch.from_numpy(retrieval_txt_dataset.h5_file['YAll'][retrieval_indices]).float()
+    train_y = torch.from_numpy(train_txt_dataset.h5_file['YAll'][train_indices]).float()
+    query_y = torch.from_numpy(query_txt_dataset.h5_file['YAll'][query_indices]).float()
+    retrieval_y = torch.from_numpy(retrieval_txt_dataset.h5_file['YAll'][retrieval_indices]).float()
 
-        num_train = len(train_indices)
+    num_train = len(train_indices)
 
-        print(f"  train_indices: {num_train}")
-        print(f"  使用按需加载，内存占用 < 100MB！")
-
-        # 将 train_x 设置为 None，训练时从 DataLoader 获取
-        train_x = None
-        query_x = None
-        retrieval_x = None
-
-    else:
-        # 模式 3：标准模式（加载所有数据到内存）
-        print("\n标准模式：加载所有数据到内存")
-        # 加载数据
-        images, tags, labels = load_data(opt.data_path)
-        pretrain_model = load_pretrain_model(opt.pretrain_model_path)
-        y_dim = tags.shape[1]
-
-        X, Y, L = split_data(images, tags, labels,
-                          query_size=opt.query_size,
-                          training_size=opt.training_size,
-                          database_size=opt.database_size)
-        print('...loading and splitting data finish')
-
-        # 准备训练数据
-        train_L = torch.from_numpy(L['train'])
-        train_x = torch.from_numpy(X['train'])
-        train_y = torch.from_numpy(Y['train'])
-
-        query_L = torch.from_numpy(L['query'])
-        query_x = torch.from_numpy(X['query'])
-        query_y = torch.from_numpy(Y['query'])
-
-        retrieval_L = torch.from_numpy(L['retrieval'])
-        retrieval_x = torch.from_numpy(X['retrieval'])
-        retrieval_y = torch.from_numpy(Y['retrieval'])
-
-        num_train = train_x.shape[0]
+    print(f"  train_indices: {num_train}")
+    print(f"  使用按需加载，内存占用 < 100MB！")
 
     # ========== 构建模型 ==========
     print("\n正在构建模型...")
@@ -189,12 +142,6 @@ def train(**kwargs):
         train_L = train_L.cuda()
         query_L = query_L.cuda()
         retrieval_L = retrieval_L.cuda()
-
-        if train_x is not None:
-            train_x = train_x.cuda()
-            query_x = query_x.cuda()
-            retrieval_x = retrieval_x.cuda()
-
         train_y = train_y.cuda()
         query_y = query_y.cuda()
         retrieval_y = retrieval_y.cuda()
@@ -206,9 +153,9 @@ def train(**kwargs):
     max_mapi2t = max_mapt2i = 0.
     result_dir = None
 
-    # 创建优化器
-    optimizer_img = SGD(img_model.parameters(), lr=lr)
-    optimizer_txt = SGD(txt_model.parameters(), lr=lr)
+    # 创建优化器（添加 momentum 和 weight_decay，匹配 Matlab 原始实现）
+    optimizer_img = SGD(img_model.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
+    optimizer_txt = SGD(txt_model.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
 
     # ========== 检查点恢复 ==========
     start_epoch = 0
@@ -241,8 +188,8 @@ def train(**kwargs):
         G_buffer = checkpoint['G_buffer'].to(device)
         B = checkpoint['B'].to(device)
     else:
-        F_buffer = torch.randn(num_train, opt.bit)
-        G_buffer = torch.randn(num_train, opt.bit)
+        F_buffer = torch.zeros(num_train, opt.bit)
+        G_buffer = torch.zeros(num_train, opt.bit)
 
         if opt.use_gpu and torch.cuda.is_available():
             F_buffer = F_buffer.cuda()
@@ -253,7 +200,8 @@ def train(**kwargs):
     # 学习率线性衰减
     learning_rate = np.linspace(opt.lr, np.power(10, -6.), opt.max_epoch + 1)
     result = {
-        'loss': []
+        'loss': [],
+        'mAP_history': []  # 新增：记录每次验证的 mAP
     }
 
     ones = torch.ones(batch_size, 1)
@@ -272,101 +220,64 @@ def train(**kwargs):
     print(f"训练集大小：{num_train}")
     print(f"批次大小：{batch_size}")
     print(f"最大 Epoch: {opt.max_epoch}")
-    print(f"低内存模式：{opt.low_memory}")
-    print(f"训练中验证：{opt.valid}")
+    print(f"验证间隔：每 {opt.valid_interval} 个 epoch" if opt.valid_interval > 0 else "训练中验证：禁用")
     print("=" * 60)
 
     for epoch in range(start_epoch, opt.max_epoch):
         # ========== 训练图像网络 ==========
-        if opt.low_memory:
-            # 低内存模式：使用 DataLoader
-            img_model.train()
-            loader_iter = iter(train_img_loader)
+        img_model.train()
+        loader_iter = iter(train_img_loader)
 
-            for i in tqdm(range(num_train // batch_size), desc=f'Epoch {epoch+1}/{opt.max_epoch} [Img]'):
-                try:
-                    batch_imgs = next(loader_iter)
-                except StopIteration:
-                    loader_iter = iter(train_img_loader)
-                    batch_imgs = next(loader_iter)
+        for i in tqdm(range(num_train // batch_size), desc=f'Epoch {epoch+1}/{opt.max_epoch} [Img]'):
+            try:
+                batch_imgs = next(loader_iter)
+            except StopIteration:
+                loader_iter = iter(train_img_loader)
+                batch_imgs = next(loader_iter)
 
-                # 获取索引
-                if isinstance(batch_imgs, (list, tuple)):
-                    batch_imgs, indices = batch_imgs
-                else:
-                    # 需要从 dataset 获取索引
-                    pass
+            # 获取索引
+            if isinstance(batch_imgs, (list, tuple)):
+                batch_imgs, indices = batch_imgs
+            else:
+                # 需要从 dataset 获取索引
+                pass
 
-                image = Variable(batch_imgs.type(torch.float))
-                if opt.use_gpu and torch.cuda.is_available():
-                    image = image.cuda()
+            image = Variable(batch_imgs.type(torch.float))
+            if opt.use_gpu and torch.cuda.is_available():
+                image = image.cuda()
 
-                # 获取对应的标签
-                sample_L = Variable(train_L[indices, :])
+            # 获取对应的标签
+            sample_L = Variable(train_L[indices, :])
 
-                # 移动变量到 GPU（如果需要）
-                if opt.use_gpu and torch.cuda.is_available():
-                    sample_L = sample_L.cuda()
-                    ones = ones.cuda()
-                    ones_ = ones_.cuda()
+            # 移动变量到 GPU（如果需要）
+            if opt.use_gpu and torch.cuda.is_available():
+                sample_L = sample_L.cuda()
+                ones = ones.cuda()
+                ones_ = ones_.cuda()
 
-                # 计算相似性矩阵
-                S = calc_neighbor(sample_L, train_L)
+            # 计算相似性矩阵
+            S = calc_neighbor(sample_L, train_L)
 
-                # 前向传播
-                cur_f = img_model(image)
+            # 前向传播
+            cur_f = img_model(image)
 
-                # 更新 F_buffer
-                F_buffer[indices, :] = cur_f.data
-                F = Variable(F_buffer)
-                G = Variable(G_buffer)
+            # 更新 F_buffer
+            F_buffer[indices, :] = cur_f.data
+            F = Variable(F_buffer)
+            G = Variable(G_buffer)
 
-                # 计算损失
-                unupdated_ind = np.setdiff1d(range(num_train), indices)
-                theta_x = 1.0 / 2 * torch.matmul(cur_f, G.t())
-                logloss_x = -torch.sum(S * theta_x - torch_func.softplus(theta_x))
-                quantization_x = torch.sum(torch.pow(B[indices, :] - cur_f, 2))
-                balance_x = torch.sum(torch.pow(cur_f.t().mm(ones) + F[unupdated_ind].t().mm(ones_), 2))
-                loss_x = logloss_x + opt.gamma * quantization_x + opt.eta * balance_x
-                loss_x /= (batch_size * num_train)
+            # 计算损失
+            unupdated_ind = np.setdiff1d(range(num_train), indices)
+            theta_x = 1.0 / 2 * torch.matmul(cur_f, G.t())
+            logloss_x = -torch.sum(S * theta_x - torch_func.softplus(theta_x))
+            quantization_x = torch.sum(torch.pow(B[indices, :] - cur_f, 2))
+            balance_x = torch.sum(torch.pow(cur_f.t().mm(ones) + F[unupdated_ind].t().mm(ones_), 2))
+            loss_x = logloss_x + opt.gamma * quantization_x + opt.eta * balance_x
 
-                optimizer_img.zero_grad()
-                loss_x.backward()
-                torch.nn.utils.clip_grad_norm_(img_model.parameters(), max_norm=5.0)
-                optimizer_img.step()
-        else:
-            # 标准模式：使用内存中的数据
-            img_model.train()
-            for i in tqdm(range(num_train // batch_size), desc=f'Epoch {epoch+1}/{opt.max_epoch} [Img]'):
-                index = np.random.permutation(num_train)
-                ind = index[0: batch_size]
-                unupdated_ind = np.setdiff1d(range(num_train), ind)
-
-                sample_L = Variable(train_L[ind, :])
-                image = Variable(train_x[ind].type(torch.float))
-                if opt.use_gpu:
-                    image = image.cuda()
-                    sample_L = sample_L.cuda()
-                    ones = ones.cuda()
-                    ones_ = ones_.cuda()
-
-                S = calc_neighbor(sample_L, train_L)
-                cur_f = img_model(image)
-                F_buffer[ind, :] = cur_f.data
-                F = Variable(F_buffer)
-                G = Variable(G_buffer)
-
-                theta_x = 1.0 / 2 * torch.matmul(cur_f, G.t())
-                logloss_x = -torch.sum(S * theta_x - torch_func.softplus(theta_x))
-                quantization_x = torch.sum(torch.pow(B[ind, :] - cur_f, 2))
-                balance_x = torch.sum(torch.pow(cur_f.t().mm(ones) + F[unupdated_ind].t().mm(ones_), 2))
-                loss_x = logloss_x + opt.gamma * quantization_x + opt.eta * balance_x
-                loss_x /= (batch_size * num_train)
-
-                optimizer_img.zero_grad()
-                loss_x.backward()
-                torch.nn.utils.clip_grad_norm_(img_model.parameters(), max_norm=5.0)
-                optimizer_img.step()
+            optimizer_img.zero_grad()
+            (loss_x / num_train).backward()
+            torch.nn.utils.clip_grad_norm_(img_model.parameters(), max_norm=5.0)
+            optimizer_img.step()
 
         # ========== 训练文本网络 ==========
         txt_model.train()
@@ -393,10 +304,9 @@ def train(**kwargs):
             quantization_y = torch.sum(torch.pow(B[ind, :] - cur_g, 2))
             balance_y = torch.sum(torch.pow(cur_g.t().mm(ones) + G[unupdated_ind].t().mm(ones_), 2))
             loss_y = logloss_y + opt.gamma * quantization_y + opt.eta * balance_y
-            loss_y /= (num_train * batch_size)
 
             optimizer_txt.zero_grad()
-            loss_y.backward()
+            (loss_y / num_train).backward()
             torch.nn.utils.clip_grad_norm_(txt_model.parameters(), max_norm=5.0)
             optimizer_txt.step()
 
@@ -417,25 +327,25 @@ def train(**kwargs):
         result['loss'].append(float(loss.data))
 
         # ========== 验证 ==========
-        if opt.valid:
-            # 需要生成查询和检索集的哈希码
-            if opt.low_memory:
-                # 低内存模式：从 Dataset 生成
-                qBX = generate_image_code_from_loader(img_model, query_img_loader, opt.bit, opt.use_gpu)
-                qBY = generate_text_code_from_dataset(txt_model, query_txt_dataset, opt.bit, opt.use_gpu)
-                rBX = generate_image_code_from_loader(img_model, retrieval_img_loader, opt.bit, opt.use_gpu)
-                rBY = generate_text_code_from_dataset(txt_model, retrieval_txt_dataset, opt.bit, opt.use_gpu)
-            else:
-                qBX = generate_image_code(img_model, query_x, opt.bit, opt.batch_size, opt.use_gpu)
-                qBY = generate_text_code(txt_model, query_y, opt.bit, opt.batch_size, opt.use_gpu)
-                rBX = generate_image_code(img_model, retrieval_x, opt.bit, opt.batch_size, opt.use_gpu)
-                rBY = generate_text_code(txt_model, retrieval_y, opt.bit, opt.batch_size, opt.use_gpu)
+        if opt.valid_interval > 0 and (epoch + 1) % opt.valid_interval == 0:
+            # 生成查询和检索集的哈希码
+            qBX = generate_image_code_from_loader(img_model, query_img_loader, opt.bit, opt.use_gpu)
+            qBY = generate_text_code_from_dataset(txt_model, query_txt_dataset, opt.bit, opt.use_gpu)
+            rBX = generate_image_code_from_loader(img_model, retrieval_img_loader, opt.bit, opt.use_gpu)
+            rBY = generate_text_code_from_dataset(txt_model, retrieval_txt_dataset, opt.bit, opt.use_gpu)
 
             mapi2t = calc_map_k(qBX, rBY, query_L, retrieval_L)
             mapt2i = calc_map_k(qBY, rBX, query_L, retrieval_L)
 
             print('...epoch: %3d, valid MAP: MAP(i->t): %3.4f, MAP(t->i): %3.4f' %
                   (epoch + 1, mapi2t, mapt2i))
+
+            # 记录 mAP 历史
+            result['mAP_history'].append({
+                'epoch': epoch + 1,
+                'mapi2t': float(mapi2t),
+                'mapt2i': float(mapt2i)
+            })
 
             if mapt2i >= max_mapt2i and mapi2t >= max_mapi2t:
                 max_mapi2t = mapi2t
@@ -463,18 +373,12 @@ def train(**kwargs):
     print("=" * 60)
 
     # 如果跳过了训练中验证，现在执行一次最终验证
-    if not opt.valid:
+    if opt.valid_interval == 0:
         print("执行最终验证...")
-        if opt.low_memory:
-            qBX = generate_image_code_from_loader(img_model, query_img_loader, opt.bit, opt.use_gpu)
-            qBY = generate_text_code_from_dataset(txt_model, query_txt_dataset, opt.bit, opt.use_gpu)
-            rBX = generate_image_code_from_loader(img_model, retrieval_img_loader, opt.bit, opt.use_gpu)
-            rBY = generate_text_code_from_dataset(txt_model, retrieval_txt_dataset, opt.bit, opt.use_gpu)
-        else:
-            qBX = generate_image_code(img_model, query_x, opt.bit, opt.batch_size, opt.use_gpu)
-            qBY = generate_text_code(txt_model, query_y, opt.bit, opt.batch_size, opt.use_gpu)
-            rBX = generate_image_code(img_model, retrieval_x, opt.bit, opt.batch_size, opt.use_gpu)
-            rBY = generate_text_code(txt_model, retrieval_y, opt.bit, opt.batch_size, opt.use_gpu)
+        qBX = generate_image_code_from_loader(img_model, query_img_loader, opt.bit, opt.use_gpu)
+        qBY = generate_text_code_from_dataset(txt_model, query_txt_dataset, opt.bit, opt.use_gpu)
+        rBX = generate_image_code_from_loader(img_model, retrieval_img_loader, opt.bit, opt.use_gpu)
+        rBY = generate_text_code_from_dataset(txt_model, retrieval_txt_dataset, opt.bit, opt.use_gpu)
 
         mapi2t = calc_map_k(qBX, rBY, query_L, retrieval_L)
         mapt2i = calc_map_k(qBY, rBX, query_L, retrieval_L)
@@ -482,6 +386,14 @@ def train(**kwargs):
         print('   Final MAP: MAP(i->t): %3.4f, MAP(t->i): %3.4f' % (mapi2t, mapt2i))
         max_mapi2t = mapi2t
         max_mapt2i = mapt2i
+
+        # 记录最终验证结果
+        result['mAP_history'].append({
+            'epoch': opt.max_epoch,
+            'mapi2t': float(mapi2t),
+            'mapt2i': float(mapt2i)
+        })
+
         save_model(img_model, 'img_model.pth', result_dir=result_dir, use_gpu=opt.use_gpu)
         save_model(txt_model, 'txt_model.pth', result_dir=result_dir, use_gpu=opt.use_gpu)
 
@@ -490,19 +402,6 @@ def train(**kwargs):
     result['mapt2i'] = max_mapt2i
 
     write_result(result, result_dir)
-
-
-def valid(img_model, txt_model, query_x, retrieval_x, query_y, retrieval_y,
-          query_L, retrieval_L, bit=64, batch_size=128, use_gpu=True):
-    """验证函数：计算 mAP"""
-    qBX = generate_image_code(img_model, query_x, bit, batch_size, use_gpu)
-    qBY = generate_text_code(txt_model, query_y, bit, batch_size, use_gpu)
-    rBX = generate_image_code(img_model, retrieval_x, bit, batch_size, use_gpu)
-    rBY = generate_text_code(txt_model, retrieval_y, bit, batch_size, use_gpu)
-
-    mapi2t = calc_map_k(qBX, rBY, query_L, retrieval_L)
-    mapt2i = calc_map_k(qBY, rBX, query_L, retrieval_L)
-    return mapi2t, mapt2i
 
 
 def calc_neighbor(label1, label2):
@@ -520,9 +419,10 @@ def calc_neighbor(label1, label2):
 
 def calc_loss(B, F, G, Sim, gamma, eta):
     """
-    计算 DCMH 总损失（归一化版本）。
+    计算 DCMH 总损失。
 
-    归一化方式与 batch loss 一致：除以 (num_train * num_train)
+    注意：不在此处归一化，梯度归一化在 backward() 调用时进行，
+    以匹配 Matlab 原始实现的梯度量级。
 
     包含：
     1. 对数损失（基于相似性矩阵）
@@ -536,57 +436,13 @@ def calc_loss(B, F, G, Sim, gamma, eta):
     term2 = torch.sum(torch.pow(B - F, 2) + torch.pow(B - G, 2))
     term3 = torch.sum(torch.pow(F.sum(dim=0), 2) + torch.pow(G.sum(dim=0), 2))
 
-    # 归一化，防止数值溢出
-    loss = (term1 + gamma * term2 + eta * term3) / (num_train * num_train)
+    # 不归一化，配合 backward 时的 (loss / num_train)
+    loss = term1 + gamma * term2 + eta * term3
     return loss
 
 
-def generate_image_code(img_model, X, bit, batch_size=128, use_gpu=True):
-    """生成图像哈希码"""
-    num_data = X.shape[0]
-    index = np.linspace(0, num_data - 1, num_data).astype(int)
-    B = torch.zeros(num_data, bit, dtype=torch.float)
-    if use_gpu and torch.cuda.is_available():
-        B = B.cuda()
-
-    img_model.eval()
-    with torch.no_grad():
-        for i in tqdm(range(num_data // batch_size + 1), desc='Generating image codes'):
-            ind = index[i * batch_size: min((i + 1) * batch_size, num_data)]
-            image = X[ind].type(torch.float)
-            if use_gpu and torch.cuda.is_available():
-                image = image.cuda()
-            cur_f = img_model(image)
-            B[ind, :] = cur_f.data
-
-    B = torch.sign(B)
-    return B
-
-
-def generate_text_code(txt_model, Y, bit, batch_size=128, use_gpu=True):
-    """生成文本哈希码"""
-    num_data = Y.shape[0]
-    index = np.linspace(0, num_data - 1, num_data).astype(int)
-    B = torch.zeros(num_data, bit, dtype=torch.float)
-    if use_gpu and torch.cuda.is_available():
-        B = B.cuda()
-
-    txt_model.eval()
-    with torch.no_grad():
-        for i in tqdm(range(num_data // batch_size + 1), desc='Generating text codes'):
-            ind = index[i * batch_size: min((i + 1) * batch_size, num_data)]
-            text = Y[ind].unsqueeze(1).unsqueeze(-1).type(torch.float)
-            if use_gpu and torch.cuda.is_available():
-                text = text.cuda()
-            cur_g = txt_model(text)
-            B[ind, :] = cur_g.data
-
-    B = torch.sign(B)
-    return B
-
-
 def generate_image_code_from_loader(img_model, loader, bit, use_gpu):
-    """从 DataLoader 生成图像哈希码（低内存模式）"""
+    """从 DataLoader 生成图像哈希码"""
     num_data = len(loader.dataset)
     B = torch.zeros(num_data, bit, dtype=torch.float)
     if use_gpu and torch.cuda.is_available():
@@ -605,22 +461,41 @@ def generate_image_code_from_loader(img_model, loader, bit, use_gpu):
     return B
 
 
-def generate_text_code_from_dataset(txt_model, dataset, bit, use_gpu):
-    """从 Dataset 生成文本哈希码（低内存模式）"""
+def generate_text_code_from_dataset(txt_model, dataset, bit, use_gpu, batch_size=128):
+    """
+    从 Dataset 批量生成文本哈希码（GPU 加速版本）。
+
+    使用 DataLoader 批处理代替逐样本处理，
+    减少 GPU 调用次数，大幅提升推理速度。
+
+    参数：
+        txt_model: 文本模型
+        dataset: DCMHTextDataset 实例
+        bit: 哈希码位数
+        use_gpu: 是否使用 GPU
+        batch_size: 批次大小（默认 128）
+
+    返回：
+        B: 哈希码矩阵 [num_data, bit]
+    """
     num_data = len(dataset)
     B = torch.zeros(num_data, bit, dtype=torch.float)
     if use_gpu and torch.cuda.is_available():
         B = B.cuda()
 
     txt_model.eval()
+    # 创建 DataLoader 进行批处理
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False,
+                       num_workers=0, pin_memory=True)
+
     with torch.no_grad():
-        for i in tqdm(range(num_data), desc='Generating text codes'):
-            tags, labels, idx = dataset[i]
-            text = tags.unsqueeze(0).type(torch.float)
+        for tags, labels, indices in tqdm(loader, desc='Generating text codes'):
+            # tags: [batch, 1, y_dim, 1]
+            text = tags.type(torch.float)
             if use_gpu and torch.cuda.is_available():
                 text = text.cuda()
-            cur_g = txt_model(text)
-            B[idx, :] = cur_g.data
+            cur_g = txt_model(text)  # 批量推理
+            B[indices, :] = cur_g.data
 
     B = torch.sign(B)
     return B
@@ -748,7 +623,8 @@ def help():
     <function> := train | test | help
     example:
             python train_dcmh.py train --lr=0.01
-            python train_dcmh.py train --low_memory=True --valid=False
+            python train_dcmh.py train --valid_interval=5
+            python train_dcmh.py train --valid_interval=0  # 仅最终验证
             python train_dcmh.py train --resume_from=results/flickr-25k/20260323_120612
             python train_dcmh.py help
     available args:''')

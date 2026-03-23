@@ -27,7 +27,12 @@ def calc_hammingDist(B1, B2):
 
 def calc_map_k(qB, rB, query_L, retrieval_L, k=None):
     """
-    计算 mAP@K。
+    计算 mAP@K（GPU 加速版本）。
+
+    优化策略：
+    1. 向量化计算所有汉明距离矩阵（一次性）
+    2. 向量化计算所有 ground truth 矩阵（一次性）
+    3. 保持张量在 GPU 上，减少数据传输
 
     参数：
         qB: {-1,+1}^{mxq} 查询哈希码
@@ -40,27 +45,34 @@ def calc_map_k(qB, rB, query_L, retrieval_L, k=None):
         mAP 值
     """
     num_query = query_L.shape[0]
-    map_score = 0
+    num_retrieval = retrieval_L.shape[0]
     if k is None:
-        k = retrieval_L.shape[0]
+        k = num_retrieval
 
-    for iter_idx in range(num_query):
-        q_L = query_L[iter_idx]
-        if len(q_L.shape) < 2:
-            q_L = q_L.unsqueeze(0)
-        gnd = (q_L.mm(retrieval_L.transpose(0, 1)) > 0).squeeze().type(torch.float32)
-        tsum = torch.sum(gnd)
+    # 向量化：一次性计算所有汉明距离 [num_query, num_retrieval]
+    hamm = calc_hammingDist(qB, rB)
+
+    # 向量化：一次性计算所有 ground truth [num_query, num_retrieval]
+    gnd = (query_L.mm(retrieval_L.transpose(0, 1)) > 0).float()
+
+    # 计算 mAP
+    map_score = 0.0
+    for i in range(num_query):
+        gnd_i = gnd[i]
+        tsum = gnd_i.sum()
         if tsum == 0:
             continue
-        hamm = calc_hammingDist(qB[iter_idx, :], rB)
-        _, ind = torch.sort(hamm)
-        ind.squeeze_()
-        gnd = gnd[ind]
+
+        # 按汉明距离排序
+        _, ind = torch.sort(hamm[i])
+        gnd_i = gnd_i[ind]
+
         total = min(k, int(tsum))
-        count = torch.arange(1, total + 1).type(torch.float32)
-        tindex = torch.nonzero(gnd)[:total].squeeze().type(torch.float32) + 1.0
-        if tindex.is_cuda:
+        count = torch.arange(1, total + 1, dtype=torch.float32)
+        if gnd_i.is_cuda:
             count = count.cuda()
+
+        tindex = torch.nonzero(gnd_i)[:total].squeeze().float() + 1.0
         map_score = map_score + torch.mean(count / tindex)
 
     map_score = map_score / num_query
