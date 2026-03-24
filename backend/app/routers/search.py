@@ -112,7 +112,7 @@ async def search(request: SearchRequest):
         query_code_np = None
         is_text_query = False  # 标记是否为文本查询
 
-        if request.query_type == "label_to_image":
+        if request.query_type == "label_to_image" or request.query_type == "label":
             # 标签→图像检索
             if not request.label_indices:
                 return SearchResponse(
@@ -327,6 +327,38 @@ async def _build_demo_database():
 def _generate_demo_query_code(bit_dim: int) -> np.ndarray:
     """生成演示查询哈希码。"""
     return np.sign(np.random.randn(1, bit_dim))
+
+
+def _process_base64_image(base64_str: str, dcmh_service, dataset_service) -> np.ndarray:
+    """
+    处理 base64 编码的图像并生成哈希码。
+
+    参数：
+        base64_str: base64 编码的图像字符串
+        dcmh_service: DCMH 服务实例
+        dataset_service: 数据集服务实例
+
+    返回：
+        哈希码数组 [bit_dim]
+    """
+    import base64
+    from io import BytesIO
+    from PIL import Image
+    from app.services.dcmh_service import preprocess_image
+
+    # 解码 base64
+    if ',' in base64_str:
+        base64_str = base64_str.split(',')[1]
+
+    image_data = base64.b64decode(base64_str)
+    image = Image.open(BytesIO(image_data))
+
+    # 预处理图像
+    image_tensor = preprocess_image(image).unsqueeze(0)
+
+    # 生成哈希码
+    hash_code = dcmh_service.generate_image_code_single(image_tensor)
+    return hash_code.cpu().numpy().squeeze()
 
 
 @router.get("/demo")

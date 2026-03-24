@@ -72,9 +72,13 @@ export default function ResultsGrid({ results, searchTime }: ResultsGridProps) {
             <div className="relative bg-gray-100 rounded-xl h-40 mb-3 overflow-hidden">
               {result.thumbnail_url ? (
                 <img
-                  src={result.thumbnail_url}
+                  src={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${result.thumbnail_url}?format=image`}
                   alt={`结果 ${result.rank}`}
                   className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-300"
+                  onError={(e) => {
+                    // 图像加载失败时显示占位符
+                    (e.target as HTMLImageElement).style.display = 'none';
+                  }}
                 />
               ) : (
                 <div className="w-full h-full flex items-center justify-center">

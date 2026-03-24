@@ -221,7 +221,7 @@ class HashCacheService:
 
         # 加载数据
         dataset_service.load_data()
-        query_indices, _, _ = dataset_service.get_data_split_indices()
+        _, query_indices, _ = dataset_service.get_data_split_indices()  # (train, query, retrieval)
 
         # 创建 DataLoader
         img_loader = dataset_service.create_image_dataloader(

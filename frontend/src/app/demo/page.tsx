@@ -97,7 +97,7 @@ export default function DemoPage() {
 
     try {
       const response = await axios.post<SearchResponse>(`${API_BASE}/api/search`, {
-        query_type: queryType,
+        query_type: queryType === 'label' ? 'label_to_image' : 'image_to_label',
         label_indices: queryType === 'label' ? selectedLabels : undefined,
         query_image: queryType === 'image' ? uploadedImage : undefined,
         top_k: 10,

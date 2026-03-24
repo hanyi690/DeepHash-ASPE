@@ -27,7 +27,7 @@ from config.dcmh_config import DCMHConfig
 from core.hashing.dcmh_data_loader import load_pretrain_model
 from core.hashing.dcmh_image import build_dcmh_image_model
 from core.hashing.dcmh_text import build_dcmh_text_model
-from core.retrieval.dcmh_metrics import calc_map_k
+from evaluation.metrics import calc_map_k
 
 
 class TrainConfig(DCMHConfig):

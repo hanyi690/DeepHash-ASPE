@@ -5,6 +5,7 @@
 """
 
 from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi.responses import Response
 from typing import Optional
 import torch
 import numpy as np
@@ -119,8 +120,14 @@ async def extract_image_feature(
 
 
 @router.get("/{image_id}")
-async def get_image(image_id: int):
-    """获取单个图像信息。"""
+async def get_image(image_id: int, format: str = "json"):
+    """
+    获取单个图像。
+
+    参数：
+        image_id: 图像索引
+        format: 返回格式，'json' 返回元信息，'image' 返回图像数据
+    """
     try:
         dataset_service = get_dataset_service()
         dataset_service.load_data()
@@ -128,19 +135,65 @@ async def get_image(image_id: int):
         # 获取数据划分
         _, _, retrieval_indices = dataset_service.get_data_split_indices()
 
-        # 检查图像是否在检索库中
-        if image_id not in retrieval_indices:
+        # 查找图像在检索库中的位置
+        idx_in_retrieval = None
+        for i, idx in enumerate(retrieval_indices):
+            if idx == image_id:
+                idx_in_retrieval = i
+                break
+
+        if idx_in_retrieval is None:
             raise HTTPException(status_code=404, detail="Image not found in retrieval set")
 
         # 获取标签
         tags = dataset_service.get_tags(np.array([image_id]))
         labels = np.where(tags[0] > 0)[0].tolist() if tags is not None else []
 
+        if format == "image":
+            # 返回实际图像数据
+            import h5py
+            h5_file = h5py.File(dataset_service.data_path, 'r')
+            try:
+                # 图像数据存储在 h5 文件中
+                images = h5_file['images']
+                if image_id >= len(images):
+                    raise HTTPException(status_code=404, detail="Image index out of range")
+
+                # 获取图像数据
+                # h5 中的图像是 int8 数组 [3, H, W]，范围约 [-42, 127]
+                img_data = images[image_id]
+
+                # CHW -> HWC
+                img_data = np.transpose(img_data, (1, 2, 0))
+
+                # 转换为 uint8
+                # 原始数据范围约 [-42, 127]，需要映射到 [0, 255]
+                img_data = img_data.astype(np.float32)
+                img_data = (img_data - img_data.min()) / (img_data.max() - img_data.min() + 1e-8) * 255
+                img_data = img_data.astype(np.uint8)
+
+                # 创建 PIL 图像
+                pil_image = Image.fromarray(img_data)
+
+                # 转换为 PNG
+                img_buffer = io.BytesIO()
+                pil_image.save(img_buffer, format='PNG')
+                img_buffer.seek(0)
+
+                return Response(
+                    content=img_buffer.getvalue(),
+                    media_type="image/png"
+                )
+            finally:
+                h5_file.close()
+
+        # 默认返回 JSON 元信息
         return {
             "success": True,
             "image_id": image_id,
             "labels": labels[:20],  # 返回前20个标签
-            "total_labels": len(labels)
+            "total_labels": len(labels),
+            "thumbnail_url": f"/api/images/{image_id}?format=image"
         }
 
     except HTTPException:

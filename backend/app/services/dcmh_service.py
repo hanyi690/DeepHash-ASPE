@@ -1,7 +1,8 @@
 """
 DCMH 服务：深度跨模态哈希码生成
 
-封装 DCMH 参考实现，提供图像和文本哈希码生成功能。
+使用项目中 core/hashing/ 目录下的 DCMH 模型实现，
+加载已训练好的模型，提供图像和文本哈希码生成功能。
 """
 
 import torch
@@ -11,20 +12,42 @@ from pathlib import Path
 import sys
 import glob
 import os
+from PIL import Image
+import torchvision.transforms as transforms
 
-# 添加项目根目录和 reference/DCMH 到路径
+# 添加项目根目录到路径
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT / "reference" / "DCMH"))
 
-# 现在可以导入 DCMH 模块
-from models.img_module import ImgModule
-from models.txt_module import TxtModule
+# 使用项目中 core/hashing 目录下的模型定义
+from core.hashing.dcmh_image import DCMHImageModule
+from core.hashing.dcmh_text import DCMHTextModule
 
 
 # 默认模型路径配置
 DEFAULT_MODEL_DIR = PROJECT_ROOT / "results" / "flickr-25k"
 DEFAULT_DATA_PATH = PROJECT_ROOT / "data" / "FLICKR-25K.mat"
+
+# 预训练 VGG-F 模型路径
+PRETRAIN_MODEL_PATH = PROJECT_ROOT / "data" / "imagenet-vgg-f.mat"
+
+
+def preprocess_image(image: Image.Image, target_size: tuple = (224, 224)) -> torch.Tensor:
+    """
+    预处理图像为模型输入格式。
+
+    参数：
+        image: PIL 图像对象
+        target_size: 目标尺寸，默认 (224, 224)
+
+    返回：
+        预处理后的图像张量 [3, H, W]
+    """
+    transform = transforms.Compose([
+        transforms.Resize(target_size),
+        transforms.ToTensor(),
+    ])
+    return transform(image.convert('RGB'))
 
 
 class DCMHService:
@@ -60,10 +83,14 @@ class DCMHService:
         self.y_dim = y_dim if y_dim is not None else self.DEFAULT_Y_DIM
         self.use_gpu = use_gpu and torch.cuda.is_available()
         self.model_loaded = False
+        self.device = torch.device("cuda" if self.use_gpu else "cpu")
 
-        # 初始化模型
-        self.img_model = ImgModule(bit_dim)
-        self.txt_model = TxtModule(y_dim=self.y_dim, bit=bit_dim)
+        # 初始化图像模型（可选加载预训练 VGG-F 权重）
+        pretrain_path = PRETRAIN_MODEL_PATH if PRETRAIN_MODEL_PATH.exists() else None
+        self.img_model = DCMHImageModule(bit=bit_dim, pretrain_model=None)
+
+        # 初始化文本模型
+        self.txt_model = DCMHTextModule(y_dim=self.y_dim, bit=bit_dim)
 
         # 自动查找最新训练的模型
         if img_model_path is None:
@@ -122,10 +149,7 @@ class DCMHService:
         """加载图像模型权重。"""
         try:
             # 使用 map_location 确保在 CPU 上也能加载 GPU 训练的模型
-            if self.use_gpu:
-                self.img_model.load(path, use_gpu=True)
-            else:
-                self.img_model.load(path, use_gpu=False)
+            self.img_model.load(path, use_gpu=self.use_gpu)
             print(f"已加载图像模型：{path}")
             self.model_loaded = True
         except Exception as e:
@@ -134,10 +158,7 @@ class DCMHService:
     def _load_txt_model(self, path: str):
         """加载文本模型权重。"""
         try:
-            if self.use_gpu:
-                self.txt_model.load(path, use_gpu=True)
-            else:
-                self.txt_model.load(path, use_gpu=False)
+            self.txt_model.load(path, use_gpu=self.use_gpu)
             print(f"已加载文本模型：{path}")
             self.model_loaded = True
         except Exception as e:

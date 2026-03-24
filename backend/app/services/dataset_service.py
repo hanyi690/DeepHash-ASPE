@@ -142,16 +142,13 @@ class DatasetService:
 
         返回：
             DataLoader 实例
+
+        注意：
+            DCMHImageDataset 已经返回正确格式的 tensor [3, 224, 224]，
+            不需要额外的 transform。图像已经在 h5 文件中预处理过。
         """
-        from torchvision import transforms
-
-        # 图像变换
-        transform = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-        ])
-
-        dataset = DCMHImageDataset(self.data_path, indices, transform)
+        # DCMHImageDataset 内部已处理图像格式，不需要额外 transform
+        dataset = DCMHImageDataset(self.data_path, indices, transform=None)
         return DataLoader(dataset, batch_size=batch_size,
                          shuffle=shuffle, num_workers=num_workers)
 
