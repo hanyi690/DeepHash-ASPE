@@ -4,6 +4,153 @@
 
 ## 📢 更新 (2026-03-24)
 
+### 统一检索系统整合 ✅
+
+已完成 **统一检索前端页面** 的创建，整合了三种检索模式：
+
+| 检索模式 | 说明 | 技术方案 |
+|----------|------|----------|
+| **标签搜图** (T2I) | 选择标签索引，检索相关图像 | DCMH 深度跨模态哈希 |
+| **图搜标签** (I2T) | 上传图像，预测相关标签 | DCMH 跨模态检索 |
+| **图搜图** (CIR) | 上传图像，检索相似图像 | CNN 特征 + SkNN 隐私保护 |
+
+**新增/修改文件**：
+
+| 操作 | 文件 | 说明 |
+|------|------|------|
+| 新建 | `frontend/src/app/search/page.tsx` | 统一检索页面 |
+| 修改 | `frontend/src/lib/api.ts` | 添加 CIR 和统一检索 API |
+| 修改 | `frontend/src/components/Navbar.tsx` | 添加"统一检索"导航入口 |
+
+**页面功能**：
+- ✅ 三种检索模式 Tab 切换
+- ✅ 隐私保护/明文检索模式切换
+- ✅ Top-K 结果数量配置
+- ✅ 加密状态可视化
+- ✅ 检索结果展示
+
+**访问方式**：
+```
+http://localhost:3000/search
+```
+
+---
+
+### 跨模态检索系统模型适配 ✅
+
+已完成已训练模型的持久化和前后端适配，实现完整的跨模态检索功能。
+
+**修改内容**：
+
+| 操作 | 文件 | 说明 |
+|------|------|------|
+| 修改 | `backend/app/services/dcmh_service.py` | 使用 `core/hashing/` 模型替代已删除的 `reference/DCMH` |
+| 修改 | `backend/app/services/dcmh_service.py` | 添加 `preprocess_image()` 图像预处理函数 |
+| 修改 | `backend/app/routers/search.py` | 添加 `_process_base64_image()` 函数处理上传图像 |
+| 修改 | `backend/app/routers/search.py` | 添加 `label` 查询类型兼容支持 |
+| 修改 | `backend/app/routers/images.py` | 添加 `format=image` 参数返回实际图像数据 |
+| 修改 | `frontend/src/app/demo/page.tsx` | 修复 `query_type` 与后端匹配 |
+| 修改 | `frontend/src/components/ResultsGrid.tsx` | 使用完整 API URL 加载图像 |
+
+**关键改动**：
+
+1. **模型导入更新**：
+```python
+# 修改前（已失效）
+from models.img_module import ImgModule
+from models.txt_module import TxtModule
+
+# 修改后
+from core.hashing.dcmh_image import DCMHImageModule
+from core.hashing.dcmh_text import DCMHTextModule
+```
+
+2. **模型路径配置**：
+```python
+# 自动查找最新训练的模型
+MODEL_DIR = PROJECT_ROOT / "results" / "flickr-25k" / "20260324_090727"
+IMG_MODEL_PATH = MODEL_DIR / "img_model.pth"
+TXT_MODEL_PATH = MODEL_DIR / "txt_model.pth"
+```
+
+3. **图像服务端点**：
+```
+GET /api/images/{image_id}         # 返回图像元信息（JSON）
+GET /api/images/{image_id}?format=image  # 返回实际图像数据（PNG）
+```
+
+**验证方式**：
+```bash
+# 1. 启动后端
+cd backend && python -m uvicorn app.main:app --reload --port 8000
+
+# 2. 启动前端
+cd frontend && npm run dev
+
+# 3. 访问演示页面
+# http://localhost:3000/demo
+# 选择标签索引（如 0, 5, 10）进行检索
+```
+
+**重建哈希缓存**：
+```bash
+# 使用 GPU 加速重建缓存
+python scripts/rebuild_hash_cache.py
+```
+
+---
+
+### 哈希缓存更新 ✅
+
+已使用 GPU 加速重建哈希缓存，修复了以下问题：
+
+| 问题 | 文件 | 修复 |
+|------|------|------|
+| DataLoader transform 类型错误 | `backend/app/services/dataset_service.py` | 移除不必要的 transform |
+| 查询集索引顺序错误 | `backend/app/services/hash_cache_service.py` | 修正索引解包顺序 |
+
+**缓存结果**：
+- 数据库哈希码: (18015, 64)
+- 查询集哈希码: (2000, 64)
+- 加密数据库: (18015, 65)
+
+---
+
+### 评估模块整合重构 ✅
+
+已完成评估代码的整合重构，消除了多个评估脚本间的重复代码，提高了可维护性。
+
+**修改内容**：
+
+| 操作 | 文件 | 说明 |
+|------|------|------|
+| 修改 | `evaluation/metrics.py` | 整合 GPU 加速 mAP 计算函数 |
+| 新建 | `evaluation/visualization.py` | 提取公共可视化函数 |
+| 新建 | `evaluation/evaluator.py` | 统一的 DCMHEvaluator 类 |
+| 新建 | `scripts/evaluate.py` | 统一命令行入口 |
+| 修改 | `evaluation/__init__.py` | 更新模块导出 |
+| 重构 | `training/postprocess.py` | 简化为调用 evaluation 模块 |
+| 删除 | `scripts/full_evaluation.py` | 功能已合并 |
+| 删除 | `training/eval_dcmh.py` | 功能已合并 |
+
+**预期收益**：
+- 减少约 70% 重复代码（约 1500+ 行）
+- 统一评估接口
+- `postprocess.py` 从 1035 行简化为约 580 行
+
+**新的使用方式**：
+```bash
+# 统一评估入口
+python scripts/evaluate.py --result_dir results/flickr-25k/20260324_090727
+
+# 或使用 Python API
+from evaluation import DCMHEvaluator
+evaluator = DCMHEvaluator(result_dir='results/flickr-25k')
+results = evaluator.evaluate()
+```
+
+---
+
 ### Loss 归一化记录优化 ✅
 
 已实现训练 loss 的归一化记录，便于监控训练趋势。
@@ -806,12 +953,17 @@ DeepHash-ASPE/
 │   └── __init__.py
 │
 ├── evaluation/             # 评估工具
-│   ├── __init__.py
-│   ├── metrics.py          # 通用评估指标
-│   ├── security.py         # 安全属性评估
-│   ├── benchmark.py        # 性能基准测试
-│   ├── evaluate_flickr25k.py   # Flickr25K 评估
-│   └── quick_eval_dcmh_aspe.py # DCMH+ASPE 快速评估
+│   ├── __init__.py         # 模块导出
+│   ├── metrics.py          # 核心指标（含 GPU 加速 mAP）
+│   ├── evaluator.py        # 统一评估器
+│   ├── visualization.py    # 可视化函数
+│   ├── benchmark.py        # ASPE 性能基准测试
+│   └── quick_eval_dcmh_aspe.py # ASPE 快速评估
+│
+├── scripts/                # 工具脚本
+│   ├── evaluate.py         # 统一评估命令行入口
+│   ├── fix_checkpoint.py   # 检查点修复
+│   └── download_cir_model.py # CNN 模型下载
 │
 ├── experiments/            # 完整实验脚本
 │   ├── __init__.py
