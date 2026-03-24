@@ -4,6 +4,8 @@ CNN Image Retrieval API Routes
 支持两种检索模式：
 1. 明文检索（传统 CNN 特征相似度）
 2. 隐私检索（ASPE 加密保护）
+
+支持多数据集缓存（roxford5k, rparis6k）
 """
 
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Query, Form
@@ -20,11 +22,55 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from app.services.cir_service import get_cir_service, CIRService
+from app.services.hash_cache_service import get_hash_cache_service
 from core.aspe.cnn_wrapper import ASPEForCNN
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/cir", tags=["CNN Image Retrieval"])
+
+# 缓存初始化标志
+_cir_cache_initialized = False
+_current_dataset: Optional[str] = None
+
+
+async def ensure_cir_cache_initialized(dataset: str = "roxford5k"):
+    """
+    确保 CIR 缓存已初始化。
+
+    参数：
+        dataset: 数据集名称（roxford5k 或 rparis6k）
+    """
+    global _cir_cache_initialized, _current_dataset
+
+    # 如果已初始化且数据集相同，直接返回
+    if _cir_cache_initialized and _current_dataset == dataset:
+        return
+
+    try:
+        hash_cache = get_hash_cache_service()
+        cir_service = get_cir_service()
+
+        # 检查缓存是否存在
+        if hash_cache.cir_cache_exists(dataset, "features"):
+            features, image_names = hash_cache.load_cir_features(dataset)
+            if features is not None:
+                cir_service.db_features = torch.from_numpy(features)
+                cir_service.db_image_names = image_names
+                logger.info(f"[CIR] 从缓存加载数据集 {dataset}: {len(image_names)} 张图像")
+
+                # 加载加密缓存
+                encrypted = hash_cache.load_cir_encrypted(dataset)
+                if encrypted is not None:
+                    cir_service.db_features = torch.from_numpy(encrypted)
+                    logger.info(f"[CIR] 从缓存加载加密数据: {encrypted.shape}")
+
+        _cir_cache_initialized = True
+        _current_dataset = dataset
+
+    except Exception as e:
+        logger.error(f"[CIR] 缓存初始化失败: {str(e)}")
+        _cir_cache_initialized = True  # 允许继续运行
 
 
 # ============= 请求/响应模型 =============
@@ -429,3 +475,98 @@ async def load_demo_database() -> Dict[str, Any]:
         }
 
     return await load_sknn_database(str(demo_db_path))
+
+
+# ============= 缓存管理端点 =============
+
+@router.get("/cache/info")
+async def get_cir_cache_info() -> Dict[str, Any]:
+    """
+    获取 CIR 缓存信息。
+
+    返回各数据集的缓存状态。
+    """
+    hash_cache = get_hash_cache_service()
+    return hash_cache.get_cir_cache_info()
+
+
+@router.post("/cache/load")
+async def load_cir_cache(
+    dataset: str = Query(default="roxford5k", description="数据集名称 (roxford5k/rparis6k)")
+) -> Dict[str, Any]:
+    """
+    从缓存加载 CIR 数据集。
+
+    参数：
+        dataset: 数据集名称
+    """
+    await ensure_cir_cache_initialized(dataset)
+
+    cir_service = get_cir_service()
+    hash_cache = get_hash_cache_service()
+
+    features, image_names = hash_cache.load_cir_features(dataset)
+
+    if features is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"数据集 {dataset} 的缓存不存在，请先运行评估生成缓存"
+        )
+
+    return {
+        "status": "success",
+        "dataset": dataset,
+        "database_size": len(image_names) if image_names else 0,
+        "feature_dim": features.shape[1] if features is not None else 0,
+        "encrypted_cached": hash_cache.cir_cache_exists(dataset, "encrypted")
+    }
+
+
+@router.post("/cache/build")
+async def build_cir_cache(
+    dataset: str = Query(default="roxford5k", description="数据集名称"),
+    data_dir: str = Query(..., description="数据集目录"),
+    force_rebuild: bool = Query(default=False, description="强制重建")
+) -> Dict[str, Any]:
+    """
+    构建 CIR 特征缓存。
+
+    参数：
+        dataset: 数据集名称
+        data_dir: 数据集目录
+        force_rebuild: 是否强制重建
+    """
+    global _cir_cache_initialized, _current_dataset
+
+    cir_service = get_cir_service()
+    hash_cache = get_hash_cache_service()
+
+    try:
+        # 确保模型已加载
+        if cir_service.model is None:
+            model_path = "data/networks/gl18-tl-resnet101-gem-w-a4d43db.pth"
+            if Path(model_path).exists():
+                cir_service.load_model(model_path)
+            else:
+                raise HTTPException(status_code=500, detail="模型未加载")
+
+        features, image_names = hash_cache.build_cir_cache(
+            cir_service=cir_service,
+            image_dir=data_dir,
+            dataset=dataset,
+            force_rebuild=force_rebuild
+        )
+
+        _cir_cache_initialized = True
+        _current_dataset = dataset
+
+        return {
+            "status": "success",
+            "dataset": dataset,
+            "database_size": len(image_names),
+            "feature_dim": features.shape[1]
+        }
+
+    except Exception as e:
+        logger.error(f"构建缓存失败：{str(e)}")
+        raise HTTPException(status_code=500, detail=f"构建缓存失败：{str(e)}")

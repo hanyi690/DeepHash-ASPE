@@ -29,5 +29,8 @@ tqdm>=4.62.0
 pyyaml>=5.4.0
 fire>=0.7.0
 
+# Optional: HuggingFace Hub for dataset download
+huggingface_hub>=0.20.0
+
 # Optional: Transformers for pre-trained text models
 # transformers>=4.10.0

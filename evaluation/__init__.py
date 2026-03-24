@@ -1,7 +1,7 @@
 """
 评估模块
 
-提供 DCMH 模型的评估功能：
+提供 DCMH 模型和 CNN 图像检索的评估功能：
 - 检索指标计算（mAP, Precision@K, Recall@K）
 - 哈希码质量评估
 - GPU 加速的 mAP 计算
@@ -9,11 +9,21 @@
 - 统一评估器
 
 使用示例：
+    # DCMH 评估器
     from evaluation import DCMHEvaluator, calc_map_k
 
-    # 使用统一评估器
     evaluator = DCMHEvaluator(result_dir='results/flickr-25k')
     results = evaluator.evaluate()
+
+    # CNN 图像检索评估器
+    from evaluation import CIREvaluator
+
+    cir_evaluator = CIREvaluator(
+        model_path='data/networks/gl18-tl-resnet101-gem-w-a4d43db.pth',
+        data_dir='data/roxford5k',
+        dataset='roxford5k'
+    )
+    results = cir_evaluator.evaluate()
 
     # 直接使用 mAP 计算函数
     import torch
@@ -50,8 +60,15 @@ from .visualization import (
     generate_evaluation_report,
 )
 
-# 评估器
-from .evaluator import DCMHEvaluator
+# 延迟导入 DCMHEvaluator
+def get_dcmh_evaluator(*args, **kwargs):
+    from .evaluator import DCMHEvaluator
+    return DCMHEvaluator(*args, **kwargs)
+
+# 延迟导入 CIREvaluator
+def get_cir_evaluator(*args, **kwargs):
+    from .cir_evaluator import CIREvaluator
+    return CIREvaluator(*args, **kwargs)
 
 __all__ = [
     # 指标
@@ -74,4 +91,5 @@ __all__ = [
     'generate_evaluation_report',
     # 评估器
     'DCMHEvaluator',
+    'CIREvaluator',
 ]

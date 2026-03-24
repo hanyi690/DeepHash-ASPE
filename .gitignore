@@ -48,10 +48,12 @@ datasets/
 .DS_Store
 Thumbs.db
 
-# Results (keep reports and charts, exclude large data)
+# Results (keep reports, charts, and JSON results)
 results/*.json
-!results/*_report.md
-!results/*.png
+!results/*/*_report.md
+!results/*/*.png
+!results/*/*.json
+!results/*/*.md
 
 # Logs
 *.log
@@ -76,8 +78,14 @@ frontend/.next/
 # Backend cache
 backend/cache/
 
-# Large result data
-results/flickr-25k/
+# Large result data (keep reports and charts)
+results/flickr-25k/*.zip
+results/flickr-25k/*/*.pth
+results/flickr-25k/*/*.pt
+!results/flickr-25k/*/*.png
+!results/flickr-25k/*/*.json
+!results/flickr-25k/*/*.md
+!results/flickr-25k/*/*.txt
 results/postprocess/
 *.zip
 

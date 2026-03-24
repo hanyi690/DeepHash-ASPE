@@ -25,7 +25,9 @@ from core.hashing.dcmh_text import DCMHTextModule
 
 
 # 默认模型路径配置
-DEFAULT_MODEL_DIR = PROJECT_ROOT / "results" / "flickr-25k"
+# 优先使用 data/dcmh/ 部署目录，回退到 results/ 训练目录
+DEFAULT_MODEL_DIR = PROJECT_ROOT / "data" / "dcmh" / "flickr25k"
+FALLBACK_MODEL_DIR = PROJECT_ROOT / "results" / "flickr-25k"
 DEFAULT_DATA_PATH = PROJECT_ROOT / "data" / "FLICKR-25K.mat"
 
 # 预训练 VGG-F 模型路径
@@ -118,32 +120,43 @@ class DCMHService:
         """
         查找最新训练的模型文件。
 
+        查找顺序：
+        1. data/dcmh/flickr25k/ (部署目录)
+        2. results/flickr-25k/*/ (训练目录)
+
         参数：
             model_type: 'img_model' 或 'txt_model'
 
         返回：
             模型文件路径，如果未找到返回 None
         """
-        model_dir = DEFAULT_MODEL_DIR
+        model_dirs = [DEFAULT_MODEL_DIR, FALLBACK_MODEL_DIR]
 
-        if not model_dir.exists():
-            print(f"模型目录不存在：{model_dir}")
-            return None
+        for model_dir in model_dirs:
+            if not model_dir.exists():
+                continue
 
-        # 查找所有子目录中的模型文件
-        pattern = str(model_dir / "*" / f"{model_type}.pth")
-        model_files = glob.glob(pattern)
+            # 部署目录直接查找模型文件
+            if "dcmh" in str(model_dir):
+                model_file = model_dir / f"{model_type}.pth"
+                if model_file.exists():
+                    print(f"使用部署模型 {model_type}：{model_file}")
+                    return str(model_file)
 
-        if not model_files:
-            print(f"未找到 {model_type} 模型文件")
-            return None
+            # 训练目录查找子目录中的模型
+            pattern = str(model_dir / "*" / f"{model_type}.pth")
+            import glob as glob_module
+            model_files = glob_module.glob(pattern)
 
-        # 按修改时间排序，选择最新的
-        model_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-        latest_model = model_files[0]
-        print(f"自动选择最新 {model_type}：{latest_model}")
+            if model_files:
+                # 按修改时间排序，选择最新的
+                model_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                latest_model = model_files[0]
+                print(f"自动选择最新 {model_type}：{latest_model}")
+                return latest_model
 
-        return latest_model
+        print(f"未找到 {model_type} 模型文件")
+        return None
 
     def _load_img_model(self, path: str):
         """加载图像模型权重。"""

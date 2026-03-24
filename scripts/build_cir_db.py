@@ -31,7 +31,7 @@ def main():
     parser.add_argument('--save_dir', type=str, default='./data/retrieval_db',
                        help='加密数据库保存目录')
     parser.add_argument('--model_path', type=str,
-                       default='./data/networks/gl18-tl-resnet101-gem-w.pth',
+                       default='./data/networks/gl18-tl-resnet101-gem-w-a4d43db.pth',
                        help='预训练模型路径')
     parser.add_argument('--feature_dim', type=int, default=2048,
                        help='特征维度（默认 2048 对应 ResNet101-GeM）')

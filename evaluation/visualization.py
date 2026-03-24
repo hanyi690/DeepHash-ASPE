@@ -31,7 +31,7 @@ def plot_map_comparison(
     bit: Optional[int] = None
 ) -> str:
     """
-    绘制 MAP 对比柱状图。
+    绘制 MAP 对比柱状图（DCMH 跨模态格式）。
 
     参数：
         map_results: 包含 map_i2t, map_t2i, map_avg 的字典
@@ -61,6 +61,51 @@ def plot_map_comparison(
         ax.set_title(f'{title} (bit={bit})', fontsize=14)
     else:
         ax.set_title(title, fontsize=14)
+    ax.set_ylim(0, 1)
+
+    for bar, val in zip(bars, values):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
+               f'{val:.4f}', ha='center', va='bottom', fontsize=11)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
+    return output_path
+
+
+def plot_cir_map_comparison(
+    map_results: Dict[str, float],
+    output_path: str,
+    title: str = 'CNN 图像检索性能'
+) -> str:
+    """
+    绘制 CIR 检索性能柱状图（Easy/Medium/Hard 三种难度）。
+
+    参数：
+        map_results: 包含 mAP_easy, mAP_medium, mAP_hard 的字典
+        output_path: 输出文件路径
+        title: 图表标题
+
+    返回：
+        图表文件路径
+    """
+    setup_chinese_font()
+    os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    categories = ['Easy', 'Medium', 'Hard']
+    values = [
+        map_results.get('mAP_easy', 0),
+        map_results.get('mAP_medium', 0),
+        map_results.get('mAP_hard', 0)
+    ]
+    colors = ['#2ca02c', '#1f77b4', '#d62728']
+
+    bars = ax.bar(categories, values, color=colors, alpha=0.8)
+    ax.set_ylabel('mAP', fontsize=12)
+    ax.set_title(title, fontsize=14)
     ax.set_ylim(0, 1)
 
     for bar, val in zip(bars, values):
@@ -407,7 +452,7 @@ def plot_aspe_comparison(
     output_path: str
 ) -> str:
     """
-    生成明文 vs 密文 mAP 对比图。
+    生成明文 vs 密文 mAP 对比图（DCMH 格式）。
 
     参数：
         aspe_results: ASPE 评估结果，包含 plaintext 和 ciphertext
@@ -452,6 +497,90 @@ def plot_aspe_comparison(
                f'{val:.4f}', ha='center', va='bottom', fontsize=10)
 
     ax.grid(True, alpha=0.3, axis='y')
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
+    return output_path
+
+
+def plot_cir_aspe_comparison(
+    aspe_results: Dict[str, Any],
+    output_path: str
+) -> str:
+    """
+    生成 CIR 评估的明文 vs 密文 mAP 对比图（Easy/Medium/Hard 三种难度）。
+
+    参数：
+        aspe_results: CIR ASPE 评估结果，包含三种难度的 plaintext 和 ciphertext
+        output_path: 输出文件路径
+
+    返回：
+        图表文件路径
+    """
+    setup_chinese_font()
+    os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
+
+    # 判断协议类型
+    protocol = aspe_results.get('protocol', 'legacy')
+
+    if protocol == 'new':
+        # 新评估协议：Easy/Medium/Hard 三种难度
+        labels = ['Easy', 'Medium', 'Hard']
+        plaintext = [
+            aspe_results.get('plaintext', {}).get('mAP_easy', 0),
+            aspe_results.get('plaintext', {}).get('mAP_medium', 0),
+            aspe_results.get('plaintext', {}).get('mAP_hard', 0)
+        ]
+        ciphertext = [
+            aspe_results.get('ciphertext', {}).get('mAP_easy', 0),
+            aspe_results.get('ciphertext', {}).get('mAP_medium', 0),
+            aspe_results.get('ciphertext', {}).get('mAP_hard', 0)
+        ]
+        errors = [
+            aspe_results.get('error', {}).get('easy', 0),
+            aspe_results.get('error', {}).get('medium', 0),
+            aspe_results.get('error', {}).get('hard', 0)
+        ]
+    else:
+        # 旧评估协议：单一 mAP
+        labels = ['mAP']
+        plaintext = [aspe_results.get('plaintext', {}).get('mAP', 0)]
+        ciphertext = [aspe_results.get('ciphertext', {}).get('mAP', 0)]
+        errors = [aspe_results.get('error', 0)]
+
+    x = np.arange(len(labels))
+    width = 0.35
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    bars1 = ax.bar(x - width/2, plaintext, width, label='明文', color='#1f77b4', alpha=0.8)
+    bars2 = ax.bar(x + width/2, ciphertext, width, label='密文(ASPE)', color='#ff7f0e', alpha=0.8)
+
+    ax.set_ylabel('mAP', fontsize=12)
+    ax.set_title('CIR ASPE 加密前后 mAP 对比', fontsize=14)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=11)
+    ax.legend(fontsize=11)
+    ax.set_ylim(0, 1)
+
+    # 添加数值标签
+    for bar, val in zip(bars1, plaintext):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+               f'{val:.4f}', ha='center', va='bottom', fontsize=10)
+    for bar, val in zip(bars2, ciphertext):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+               f'{val:.4f}', ha='center', va='bottom', fontsize=10)
+
+    ax.grid(True, alpha=0.3, axis='y')
+
+    # 添加误差说明（在图表底部）
+    if protocol == 'new':
+        error_text = f"误差: Easy={errors[0]:.2e}, Medium={errors[1]:.2e}, Hard={errors[2]:.2e}"
+    else:
+        error_text = f"误差: {errors[0]:.2e}"
+    ax.text(0.5, -0.12, error_text, transform=ax.transAxes,
+           ha='center', fontsize=10, color='gray')
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight')

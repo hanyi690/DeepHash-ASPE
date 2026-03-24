@@ -88,7 +88,12 @@
       "Bash(cmd //c \"taskkill /PID 29604 /F\")",
       "Bash(grep:*)",
       "Bash(cmd //c \"taskkill /F /IM python.exe\" 2>/dev/null; true)",
-      "Bash(.venv\\\\Scripts\\\\python.exe scripts\\\\rebuild_hash_cache.py)"
+      "Bash(.venv\\\\Scripts\\\\python.exe scripts\\\\rebuild_hash_cache.py)",
+      "WebFetch(domain:hf-mirror.com)",
+      "WebFetch(domain:modelscope.cn)",
+      "Bash(pip show:*)",
+      "Bash(du:*)",
+      "Bash(powershell -Command \"Get-Content 'C:\\\\Users\\\\24957\\\\.claude\\\\projects\\\\F--project-DeepHash-ASPE\\\\a34c4f30-241a-4588-abc5-51f0571ce041\\\\tool-results\\\\toolu_tool-8278f747cedc47caa6069537d28e0658.txt' -Tail 30\")"
     ]
   },
   "skipWebFetchPreflight": true

@@ -275,22 +275,43 @@ def init_network(params):
     return net
 
 
-def extract_vectors(net, images, image_size, transform, bbxs=None, ms=[1], msp=1, print_freq=10):
-    # moving network to gpu and eval mode
-    net.cuda()
+def extract_vectors(net, images, image_size, transform, bbxs=None, ms=[1], msp=1, print_freq=10, batch_size=16):
+    """
+    提取图像特征向量（支持 GPU 批处理加速）。
+
+    参数：
+        net: 神经网络模型
+        images: 图像路径列表
+        image_size: 图像缩放大小（最长边）
+        transform: 图像变换
+        bbxs: 边界框列表（可选）
+        ms: 多尺度列表
+        msp: 多尺度池化参数
+        print_freq: 打印频率
+        batch_size: 批处理大小
+    """
+    # determine device and set eval mode
+    device = next(net.parameters()).device
     net.eval()
 
+    # num_workers: Windows requires 0 for multiprocessing compatibility
+    import platform
+    num_workers = 0 if platform.system() == 'Windows' else 8
+    pin_memory = device.type == 'cuda'
+
     # creating dataset loader
+    # Note: batch_size=1 is required because images have variable sizes after imresize
+    # The original implementation also uses batch_size=1 for this reason
     loader = torch.utils.data.DataLoader(
         ImagesFromList(root='', images=images, imsize=image_size, bbxs=bbxs, transform=transform),
-        batch_size=1, shuffle=False, num_workers=8, pin_memory=True
+        batch_size=1, shuffle=False, num_workers=num_workers, pin_memory=pin_memory
     )
 
     # extracting vectors
     with torch.no_grad():
         vecs = torch.zeros(net.meta['outputdim'], len(images))
         for i, input in enumerate(loader):
-            input = input.cuda()
+            input = input.to(device)
 
             if len(ms) == 1 and ms[0] == 1:
                 vecs[:, i] = extract_ss(net, input)

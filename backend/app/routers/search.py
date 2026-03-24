@@ -26,13 +26,19 @@ router = APIRouter(prefix="/api/search", tags=["search"])
 
 # 缓存初始化标志
 _cache_initialized = False
+_current_dcmh_dataset: str = "flickr25k"
 
 
-async def ensure_cache_initialized():
-    """确保缓存已初始化。"""
-    global _cache_initialized
+async def ensure_cache_initialized(dataset: str = "flickr25k"):
+    """
+    确保缓存已初始化。
 
-    if _cache_initialized:
+    参数：
+        dataset: 数据集名称（默认 flickr25k）
+    """
+    global _cache_initialized, _current_dcmh_dataset
+
+    if _cache_initialized and _current_dcmh_dataset == dataset:
         return
 
     try:
@@ -45,17 +51,17 @@ async def ensure_cache_initialized():
         if not dcmh_service.is_loaded():
             print("警告：DCMH 模型未加载，将使用随机哈希码")
 
-        # 检查缓存是否存在
-        if hash_cache.exists("database"):
+        # 使用新格式缓存路径
+        if hash_cache.dcmh_cache_exists(dataset, "database"):
             # 加载缓存
-            database_codes, database_labels = hash_cache.load_cache("database")
+            database_codes, database_labels = hash_cache.load_dcmh_cache(dataset, "database")
             if database_codes is not None:
                 hash_cache.database_codes = database_codes
                 hash_cache.database_labels = database_labels
 
                 # 加密数据库
-                if hash_cache.exists("encrypted_database"):
-                    encrypted = hash_cache.load_encrypted_cache()
+                if hash_cache.dcmh_cache_exists(dataset, "encrypted"):
+                    encrypted = hash_cache.load_dcmh_encrypted(dataset)
                     if encrypted is not None:
                         hash_cache.encrypted_database = encrypted
                         aspe_service.encrypted_database = encrypted
@@ -68,9 +74,10 @@ async def ensure_cache_initialized():
 
                 aspe_service.database_codes = database_codes
                 aspe_service.database_labels = database_labels
-                print(f"缓存已加载：{database_codes.shape[0]} 条记录")
+                print(f"[DCMH] 缓存已加载 ({dataset})：{database_codes.shape[0]} 条记录")
 
         _cache_initialized = True
+        _current_dcmh_dataset = dataset
 
     except Exception as e:
         print(f"缓存初始化警告：{e}")
@@ -405,9 +412,16 @@ async def search_status():
 
 
 @router.post("/rebuild-cache")
-async def rebuild_cache():
-    """重建哈希码缓存。"""
-    global _cache_initialized
+async def rebuild_cache(
+    dataset: str = Query(default="flickr25k", description="数据集名称")
+):
+    """
+    重建哈希码缓存。
+
+    参数：
+        dataset: 数据集名称（flickr25k, mscoco 等）
+    """
+    global _cache_initialized, _current_dcmh_dataset
     _cache_initialized = False
 
     try:
@@ -419,18 +433,20 @@ async def rebuild_cache():
         if not dcmh_service.is_loaded():
             return {"success": False, "message": "DCMH 模型未加载"}
 
-        # 重建缓存
+        # 重建缓存（指定数据集）
         database_codes, database_labels = hash_cache.build_database_cache(
-            dcmh_service, dataset_service, batch_size=32, force_rebuild=True
+            dcmh_service, dataset_service, batch_size=32, force_rebuild=True, dataset=dataset
         )
 
-        hash_cache.build_encrypted_cache(aspe_service, force_rebuild=True)
+        hash_cache.build_encrypted_cache(aspe_service, force_rebuild=True, dataset=dataset)
 
         _cache_initialized = True
+        _current_dcmh_dataset = dataset
 
         return {
             "success": True,
-            "message": "缓存重建完成",
+            "message": f"缓存重建完成 ({dataset})",
+            "dataset": dataset,
             "database_size": database_codes.shape[0]
         }
 
