@@ -91,17 +91,17 @@ class DCMHTextDataset(Dataset):
     DCMH 文本标签数据集。
 
     存储 multi-hot 标签向量。
-    注意：Reference/DCMH 不使用归一化，直接用 {0,1} 稀疏向量。
+    零均值归一化是 DCMH 训练的必要预处理，有助于稳定训练。
     """
 
-    def __init__(self, h5_path, indices=None, normalize=False):
+    def __init__(self, h5_path, indices=None, normalize=True):
         """
         初始化数据集。
 
         参数：
             h5_path: FLICKR-25K.mat 文件路径
             indices: 要使用的样本索引
-            normalize: 是否对文本特征进行零均值归一化（默认 False，与 Reference/DCMH 一致）
+            normalize: 是否对文本特征进行零均值归一化（默认 True，稳定训练）
         """
         self.h5_path = h5_path
         self.indices = indices
@@ -169,6 +169,7 @@ class DCMHTextDataset(Dataset):
         return tags_tensor, labels_tensor, idx
 
     def __del__(self):
+        
         try:
             if self._h5_file is not None:
                 self._h5_file.close()

@@ -35,8 +35,8 @@ class DCMHConfig(object):
     # 设备参数
     use_gpu = True
 
-    # 验证
-    valid = True
+    # 验证间隔（每 N 个 epoch 验证一次，0 表示禁用训练中验证）
+    valid_interval = 10  # 默认每 10 个 epoch 验证一次
 
     # 打印频率
     print_freq = 2  # 每 N 个 epoch 打印一次

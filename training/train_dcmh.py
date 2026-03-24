@@ -44,7 +44,7 @@ class TrainConfig(DCMHConfig):
     resume_from = None  # 从指定检查点恢复（目录路径）
 
     # 训练优化（PyTorch 2.0+）
-    use_amp = True  # 混合精度训练（自动检测 GPU）
+    use_amp = False  # 禁用混合精度训练，避免 theta 计算时 float16 溢出导致 NaN
     use_compile = True  # torch.compile 优化（PyTorch 2.0+）
 
 
@@ -173,9 +173,9 @@ def train(**kwargs):
     max_mapi2t = max_mapt2i = 0.
     result_dir = None
 
-    # 创建优化器（添加 momentum 和 weight_decay，匹配 Matlab 原始实现）
-    optimizer_img = SGD(img_model.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
-    optimizer_txt = SGD(txt_model.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
+    # 创建优化器（与 MATLAB 一致：无 momentum，有 weight_decay）
+    optimizer_img = SGD(img_model.parameters(), lr=lr, weight_decay=5e-4)
+    optimizer_txt = SGD(txt_model.parameters(), lr=lr, weight_decay=5e-4)
 
     # 混合精度训练 GradScaler
     use_amp = opt.use_amp and opt.use_gpu and torch.cuda.is_available()
@@ -214,6 +214,7 @@ def train(**kwargs):
         G_buffer = checkpoint['G_buffer'].to(device)
         B = checkpoint['B'].to(device)
     else:
+        # 使用零初始化（与 MATLAB 原版一致，避免 theta 初始值过大导致 exp 溢出）
         F_buffer = torch.zeros(num_train, opt.bit)
         G_buffer = torch.zeros(num_train, opt.bit)
 
@@ -223,8 +224,8 @@ def train(**kwargs):
 
         B = torch.sign(F_buffer + G_buffer)
 
-    # 学习率线性衰减
-    learning_rate = np.linspace(opt.lr, np.power(10, -6.), opt.max_epoch + 1)
+    # 学习率对数衰减（与 MATLAB 一致：logspace(-1.5, -3)）
+    learning_rate = np.logspace(-1.5, -3, opt.max_epoch + 1)
     result = {
         'loss': [],
         'mAP_history': []  # 新增：记录每次验证的 mAP
@@ -289,31 +290,58 @@ def train(**kwargs):
                 # 前向传播
                 cur_f = img_model(image)
 
-                # 计算损失
-                unupdated_ind = np.setdiff1d(range(num_train), indices)
-                theta_x = 1.0 / 2 * torch.matmul(cur_f, G_buffer.t())
-                logloss_x = -torch.sum(S * theta_x - torch_func.softplus(theta_x))
-                quantization_x = torch.sum(torch.pow(B[indices, :] - cur_f, 2))
-                balance_x = torch.sum(torch.pow(cur_f.t().mm(ones) + F_buffer[unupdated_ind].t().mm(ones_), 2))
-                loss_x = logloss_x + opt.gamma * quantization_x + opt.eta * balance_x
-                loss_x = loss_x / (batch_size * num_train)  # 与 Reference/DCMH 一致
+            # === NaN 调试日志 ===
+            if i == 0 and epoch < 3:
+                print(f"\n[DEBUG] Epoch {epoch+1}, Batch 0 (Image):")
+                print(f"  image: min={image.min().item():.4f}, max={image.max().item():.4f}, has_nan={torch.isnan(image).any().item()}")
+                print(f"  cur_f: min={cur_f.min().item():.4f}, max={cur_f.max().item():.4f}, has_nan={torch.isnan(cur_f).any().item()}")
+                print(f"  F_buffer: min={F_buffer.min().item():.4f}, max={F_buffer.max().item():.4f}")
+                print(f"  G_buffer: min={G_buffer.min().item():.4f}, max={G_buffer.max().item():.4f}")
 
-            # 更新 F_buffer（在 autocast 外，确保 float32）
-            F_buffer[indices, :] = cur_f.float().data
+            # theta 计算在 autocast 外进行，确保 float32 精度，避免 exp 溢出
+            # 计算损失
+            unupdated_ind = np.setdiff1d(range(num_train), indices)
+            theta_x = 1.0 / 2 * torch.matmul(cur_f.float(), G_buffer.t().float())
+            logloss_x = -torch.sum(S.float() * theta_x - torch_func.softplus(theta_x))
+            quantization_x = torch.sum(torch.pow(B[indices, :].float() - cur_f.float(), 2))
+            balance_x = torch.sum(torch.pow(cur_f.float().t().mm(ones) + F_buffer[unupdated_ind].t().mm(ones_), 2))
+            loss_x = logloss_x + opt.gamma * quantization_x + opt.eta * balance_x
+            loss_x = loss_x / (batch_size * num_train)  # 与 Reference/DCMH 一致
+
+            # === NaN 调试日志 ===
+            if i == 0 and epoch < 3:
+                print(f"  theta_x: min={theta_x.min().item():.4f}, max={theta_x.max().item():.4f}, has_nan={torch.isnan(theta_x).any().item()}")
+                print(f"  logloss_x: {logloss_x.item():.4f}, has_nan={torch.isnan(logloss_x).any().item()}")
+                print(f"  quantization_x: {quantization_x.item():.4f}, has_nan={torch.isnan(quantization_x).any().item()}")
+                print(f"  balance_x: {balance_x.item():.4f}, has_nan={torch.isnan(balance_x).any().item()}")
+                print(f"  loss_x: {loss_x.item():.4f}, has_nan={torch.isnan(loss_x).any().item()}")
+
+            # 更新 F_buffer（使用 detach().clone() 确保数据独立，避免计算图污染）
+            F_buffer[indices, :] = cur_f.float().detach().clone()
+
+            # === 检查 F_buffer 是否被污染 ===
+            if torch.isnan(F_buffer).any():
+                print(f"\n[ERROR] F_buffer has NaN after batch {i}!")
+                print(f"  F_buffer[indices] has_nan: {torch.isnan(F_buffer[indices]).any().item()}")
+                break
 
             optimizer_img.zero_grad()
             if use_amp:
                 scaler.scale(loss_x).backward()
                 scaler.unscale_(optimizer_img)
-                torch.nn.utils.clip_grad_norm_(img_model.parameters(), max_norm=5.0)
                 scaler.step(optimizer_img)
                 scaler.update()
             else:
                 loss_x.backward()
-                torch.nn.utils.clip_grad_norm_(img_model.parameters(), max_norm=5.0)
                 optimizer_img.step()
 
         # ========== 训练文本网络 ==========
+        # === 检查 F_buffer 状态 ===
+        if epoch < 3:
+            print(f"\n[DEBUG] Before Text Training:")
+            print(f"  F_buffer: min={F_buffer.min().item():.4f}, max={F_buffer.max().item():.4f}, has_nan={torch.isnan(F_buffer).any().item()}")
+            print(f"  G_buffer: min={G_buffer.min().item():.4f}, max={G_buffer.max().item():.4f}, has_nan={torch.isnan(G_buffer).any().item()}")
+
         txt_model.train()
         for i in tqdm(range(num_train // batch_size), desc=f'Epoch {epoch+1}/{opt.max_epoch} [Txt]'):
             index = np.random.permutation(num_train)
@@ -333,26 +361,37 @@ def train(**kwargs):
             with autocast('cuda', enabled=use_amp):
                 cur_g = txt_model(text)
 
-                theta_y = 1.0 / 2 * torch.matmul(cur_g, F_buffer.t())
-                logloss_y = -torch.sum(S * theta_y - torch_func.softplus(theta_y))
-                quantization_y = torch.sum(torch.pow(B[ind, :] - cur_g, 2))
-                balance_y = torch.sum(torch.pow(cur_g.t().mm(ones) + G_buffer[unupdated_ind].t().mm(ones_), 2))
-                loss_y = logloss_y + opt.gamma * quantization_y + opt.eta * balance_y
-                loss_y = loss_y / (batch_size * num_train)  # 与 Reference/DCMH 一致
+            # === NaN 调试日志 ===
+            if i == 0 and epoch < 3:
+                print(f"\n[DEBUG] Epoch {epoch+1}, Batch 0 (Text):")
+                print(f"  text: min={text.min().item():.4f}, max={text.max().item():.4f}, has_nan={torch.isnan(text).any().item()}")
+                print(f"  cur_g: min={cur_g.min().item():.4f}, max={cur_g.max().item():.4f}, has_nan={torch.isnan(cur_g).any().item()}")
 
-            # 更新 G_buffer（在 autocast 外，确保 float32）
-            G_buffer[ind, :] = cur_g.float().data
+            # theta 计算在 autocast 外进行，确保 float32 精度，避免 exp 溢出
+            theta_y = 1.0 / 2 * torch.matmul(cur_g.float(), F_buffer.t().float())
+            logloss_y = -torch.sum(S.float() * theta_y - torch_func.softplus(theta_y))
+            quantization_y = torch.sum(torch.pow(B[ind, :].float() - cur_g.float(), 2))
+            balance_y = torch.sum(torch.pow(cur_g.float().t().mm(ones) + G_buffer[unupdated_ind].t().mm(ones_), 2))
+            loss_y = logloss_y + opt.gamma * quantization_y + opt.eta * balance_y
+            loss_y = loss_y / (batch_size * num_train)  # 与 Reference/DCMH 一致
+
+            # === NaN 调试日志 ===
+            if i == 0 and epoch < 3:
+                print(f"  theta_y: min={theta_y.min().item():.4f}, max={theta_y.max().item():.4f}, has_nan={torch.isnan(theta_y).any().item()}")
+                print(f"  logloss_y: {logloss_y.item():.4f}, has_nan={torch.isnan(logloss_y).any().item()}")
+                print(f"  loss_y: {loss_y.item():.4f}, has_nan={torch.isnan(loss_y).any().item()}")
+
+            # 更新 G_buffer（使用 detach().clone() 确保数据独立，避免计算图污染）
+            G_buffer[ind, :] = cur_g.float().detach().clone()
 
             optimizer_txt.zero_grad()
             if use_amp:
                 scaler.scale(loss_y).backward()
                 scaler.unscale_(optimizer_txt)
-                torch.nn.utils.clip_grad_norm_(txt_model.parameters(), max_norm=5.0)
                 scaler.step(optimizer_txt)
                 scaler.update()
             else:
                 loss_y.backward()
-                torch.nn.utils.clip_grad_norm_(txt_model.parameters(), max_norm=5.0)
                 optimizer_txt.step()
 
         # ========== 更新 B ==========
@@ -363,13 +402,27 @@ def train(**kwargs):
         G = Variable(G_buffer)
         loss = calc_loss(B, F, G, Variable(Sim), opt.gamma, opt.eta)
 
+        # === NaN 调试日志 ===
+        if epoch < 3:
+            print(f"\n[DEBUG] Epoch {epoch+1} Total Loss:")
+            print(f"  F: min={F.min().item():.4f}, max={F.max().item():.4f}, has_nan={torch.isnan(F).any().item()}")
+            print(f"  G: min={G.min().item():.4f}, max={G.max().item():.4f}, has_nan={torch.isnan(G).any().item()}")
+            print(f"  Sim: min={Sim.min().item():.4f}, max={Sim.max().item():.4f}")
+            print(f"  total loss: {loss.item():.4e}, has_nan={torch.isnan(loss).any().item()}")
+
         # NaN/Inf 检测
         if torch.isnan(loss) or torch.isinf(loss):
             print(f'Warning: loss is {loss.data}, skipping epoch {epoch + 1}')
             continue
 
-        print('...epoch: %3d, loss: %3.3f, lr: %f' % (epoch + 1, loss.data, lr))
-        result['loss'].append(float(loss.data))
+        # 检查总 loss 是否溢出（数值过大可能导致精度问题）
+        if loss.data > 1e15:
+            print(f'Warning: total loss is very large ({loss.data:.2e}), may cause precision issues')
+
+        # 记录归一化 loss（便于监控训练趋势）
+        normalized_loss = loss.data / (num_train * num_train)
+        print('...epoch: %3d, loss: %3.3f, lr: %f' % (epoch + 1, normalized_loss, lr))
+        result['loss'].append(float(normalized_loss))
 
         # ========== 验证 ==========
         if opt.valid_interval > 0 and (epoch + 1) % opt.valid_interval == 0:

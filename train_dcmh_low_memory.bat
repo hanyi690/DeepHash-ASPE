@@ -1,9 +1,9 @@
 @echo off
-REM DCMH 低内存训练脚本
-REM 适用于 7GB 内存限制环境
+REM DCMH 训练脚本
+REM 使用 Dataset 按需加载数据，内存占用 < 100MB
 
 echo ============================================================
-echo DCMH 低内存训练
+echo DCMH 训练
 echo ============================================================
 echo.
 echo 选择训练模式:
@@ -17,17 +17,13 @@ echo    - 最低内存（~50MB）
 echo    - 最快速度（训练速度提升 10 倍）
 echo    - 需要额外时间提取特征
 echo.
-echo 3. 标准模式（加载所有数据到内存）
-echo    - 需要 11+ GB 内存
-echo    - 完整功能（训练中验证）
-echo.
-set /p mode="请输入选择 (1/2/3): "
+set /p mode="请输入选择 (1/2): "
 
 if "%mode%"=="1" (
     echo.
-    echo 正在启动低内存模式训练...
+    echo 正在启动训练...
     echo.
-    python training/train_dcmh.py train --low_memory=True --valid=False --max_epoch=500 --bit=64
+    python training/train_dcmh.py train --valid=False --max_epoch=500 --bit=64
     goto :end
 )
 
@@ -62,17 +58,7 @@ if "%mode%"=="2" (
     goto :end
 )
 
-if "%mode%"=="3" (
-    echo.
-    echo 正在启动标准模式训练...
-    echo.
-    echo 警告：此模式需要 11+ GB 内存
-    echo.
-    python training/train_dcmh.py train --max_epoch=500 --bit=64
-    goto :end
-)
-
-echo 无效选择，请输入 1/2/3
+echo 无效选择，请输入 1 或 2
 :end
 echo.
 echo 训练完成！

@@ -13,7 +13,10 @@ LAYER1_NODE = 8192
 
 
 def weights_init(m):
-    """初始化卷积层权重。"""
+    """初始化卷积层权重。
+
+    与 MATLAB 一致，使用 0.01 标准差。
+    """
     if type(m) == nn.Conv2d:
         nn.init.normal_(m.weight.data, 0.0, 0.01)
         nn.init.normal_(m.bias.data, 0.0, 0.01)

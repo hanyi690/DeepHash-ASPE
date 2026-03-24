@@ -71,7 +71,7 @@ class DCMHImageModule(DCMHBasicModule):
             # 18 relu7
             nn.ReLU(inplace=True),
         )
-        # fc8
+        # fc8 - 与 MATLAB 一致的初始化 (0.01 标准差)
         self.classifier = nn.Linear(in_features=4096, out_features=bit)
         self.classifier.weight.data = torch.randn(bit, 4096) * 0.01
         self.classifier.bias.data = torch.randn(bit) * 0.01
