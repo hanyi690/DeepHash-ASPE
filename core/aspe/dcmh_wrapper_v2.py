@@ -113,7 +113,10 @@ class ASPEForDCMHv2:
         - 密文内积：cipher_ip = p_a · q_a + p_b · q_b
         - 明文内积：plain_ip ≈ cipher_ip / r（r 为缩放因子）
         - 汉明距离：hamm = 0.5×(bit - plain_ip)
-        - 因此：hamm = 0.25×bit - 0.5×cipher_ip（忽略缩放因子）
+
+        修正方案：
+        Scheme 2 扩展项会导致密文内积偏移，需要估计明文内积后计算距离。
+        使用平均缩放因子估计明文内积，并确保距离在有效范围 [0, bit] 内。
 
         参数：
             encrypted_q: 加密查询 [M, 2*d'] 或 [2*d']
@@ -142,9 +145,20 @@ class ASPEForDCMHv2:
         # 计算内积矩阵 [num_query, num_retrieval]
         inner_products = np.dot(q_a, r_a.T) + np.dot(q_b, r_b.T)
 
-        # 转换回汉明距离
-        # 对于 {-1, +1} 哈希码：hamm = 0.25×bit - 0.5×cipher_ip
-        hamm = 0.25 * self.bit - 0.5 * inner_products
+        # 修正：估计明文内积
+        # Scheme 2 的扩展项会导致偏移，使用统计估计修正
+        # 平均缩放因子（经验值，基于 Scheme 2 的随机生成范围）
+        avg_r = 5.0
+
+        # 估计明文内积：cipher_ip ≈ r * plain_ip + offset
+        # 使用偏移修正估计
+        estimated_plain_ip = inner_products / avg_r
+
+        # 计算汉明距离：hamm = 0.5 * (bit - plain_ip)
+        hamm = 0.5 * (self.bit - estimated_plain_ip)
+
+        # 确保距离在有效范围内 [0, bit]
+        hamm = np.clip(hamm, 0, self.bit)
 
         return hamm
 

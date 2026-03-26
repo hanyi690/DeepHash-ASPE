@@ -128,6 +128,8 @@ class SearchResult(BaseModel):
     hash_code: Optional[List[int]] = None  # 哈希码展示
     category_hit: bool = False  # LAll 类别是否命中
     tag_hit: bool = False  # YAll 标签是否命中
+    category_names: List[str] = []  # 结果图像的所有类别名称 (LAll)
+    hit_category_names: List[str] = []  # 命中的类别名称
 
 
 class HitStats(BaseModel):
@@ -142,10 +144,6 @@ class HitStats(BaseModel):
     # 查询信息
     query_tags: List[int] = []
     query_tag_names: List[str] = []
-    # 兼容旧字段
-    hits: int = 0  # 等同于 tag_hits
-    hit_rate: float = 0.0  # 等同于 tag_hit_rate
-    query_tag_count: int = 0
 
 
 class ImageToTagResult(BaseModel):

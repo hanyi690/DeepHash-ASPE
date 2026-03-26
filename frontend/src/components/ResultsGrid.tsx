@@ -15,6 +15,8 @@ interface SearchResult {
   hash_code?: number[];
   category_hit?: boolean;  // LAll 类别是否命中
   tag_hit?: boolean;  // YAll 标签是否命中
+  category_names?: string[];  // 结果图像的所有类别名称 (LAll)
+  hit_category_names?: string[];  // 命中的类别名称
 }
 
 interface HitStats {
@@ -159,7 +161,7 @@ export default function ResultsGrid({ results, searchTime, hitStats }: ResultsGr
             <div className="relative bg-gray-100 rounded-xl h-40 mb-3 overflow-hidden">
               {result.thumbnail_url ? (
                 <img
-                  src={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${result.thumbnail_url}${result.thumbnail_url.startsWith('/api/images/') ? '?format=image' : ''}`}
+                  src={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${result.thumbnail_url}`}
                   alt={`结果 ${result.rank}`}
                   className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-300"
                   onError={(e) => {
@@ -267,6 +269,47 @@ export default function ResultsGrid({ results, searchTime, hitStats }: ResultsGr
                 {result.hit_tag_names && result.hit_tag_names.length > 0 && (
                   <p className="text-xs text-emerald-600 mt-2">
                     命中 {result.hit_tag_names.length} 个查询标签
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* 类别名称显示 */}
+            {result.category_names && result.category_names.length > 0 && (
+              <div className="pt-3 border-t border-gray-100">
+                <p className="text-xs text-gray-500 mb-2 flex items-center">
+                  <svg className="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                  </svg>
+                  类别
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {result.category_names.slice(0, 8).map((name, i) => {
+                    const isHit = result.hit_category_names && result.hit_category_names.includes(name);
+                    return (
+                      <span
+                        key={i}
+                        className={`px-2 py-0.5 rounded text-xs font-medium ${
+                          isHit
+                            ? 'bg-purple-100 text-purple-700 ring-1 ring-purple-300'
+                            : 'bg-gray-100 text-gray-600'
+                        }`}
+                      >
+                        {name}
+                        {isHit && ' ✓'}
+                      </span>
+                    );
+                  })}
+                  {result.category_names.length > 8 && (
+                    <span className="px-2 py-0.5 text-gray-400 text-xs">
+                      +{result.category_names.length - 8} 更多
+                    </span>
+                  )}
+                </div>
+                {/* 命中类别统计 */}
+                {result.hit_category_names && result.hit_category_names.length > 0 && (
+                  <p className="text-xs text-purple-600 mt-2">
+                    命中 {result.hit_category_names.length} 个类别
                   </p>
                 )}
               </div>

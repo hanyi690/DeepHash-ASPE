@@ -62,29 +62,37 @@ async def ensure_cache_initialized(dataset: str = "flickr25k"):
         if not dcmh_service.is_loaded():
             logger.warning("DCMH 模型未加载，将使用随机哈希码")
 
-        # 尝试加载完整的数据库缓存
-        image_codes, text_codes, tags = hash_cache.load_full_database(dataset)
+        # 尝试加载完整的数据库缓存（返回 YAll）
+        image_codes, text_codes, yall = hash_cache.load_dcmh_yall(dataset)
 
         if image_codes is not None:
             hash_cache.database_codes = image_codes
             hash_cache.database_text_codes = text_codes
-            hash_cache.database_tags = tags
+            hash_cache.database_tags = yall  # YAll 用于检索结果显示
 
-            # 加密数据库
+            # 加载 LAll 类别标签（用于 mAP 计算）
+            lall = hash_cache.load_dcmh_lall(dataset)
+
+            # 加密数据库（传递 LAll 给 aspe_service）
             if hash_cache.dcmh_cache_exists(dataset, "encrypted"):
                 encrypted = hash_cache.load_dcmh_encrypted(dataset)
                 if encrypted is not None:
                     hash_cache.encrypted_database = encrypted
                     aspe_service.encrypted_database = encrypted
                     aspe_service.database_codes = image_codes
-                    aspe_service.database_tags = tags
+                    aspe_service.database_labels = lall  # LAll
             else:
-                # 加密数据库
-                encrypted = aspe_service.encrypt_database(image_codes, tags)
-                hash_cache.encrypted_database = encrypted
+                # 注意：encrypt_database 的第二个参数应该是 LAll
+                if lall is not None:
+                    encrypted = aspe_service.encrypt_database(image_codes, lall)
+                    hash_cache.encrypted_database = encrypted
+                else:
+                    logger.warning(f"[DCMH] LAll 未找到，使用 YAll 作为标签 ({dataset})")
+                    encrypted = aspe_service.encrypt_database(image_codes, yall)
+                    hash_cache.encrypted_database = encrypted
 
             aspe_service.database_codes = image_codes
-            aspe_service.database_tags = tags
+            aspe_service.database_labels = lall if lall is not None else yall  # LAll 用于 mAP 计算
 
             logger.info(f"[DCMH] 缓存已加载 ({dataset})：图像 {image_codes.shape[0]} 条，"
                        f"文本 {text_codes.shape[0] if text_codes is not None else 0} 条")
@@ -265,7 +273,7 @@ async def search(request: SearchRequest):
         retrieval_tags = dataset_service.get_yall(retrieval_indices)
 
         # 加载 LAll 类别标签（用于类别命中率计算）
-        retrieval_lall = hash_cache.load_dcmh_lall(dataset)
+        retrieval_lall = hash_cache.load_dcmh_lall(request.dataset)
 
         # 根据查询类型构建结果
         results: List[SearchResult] = []
@@ -346,11 +354,22 @@ async def search(request: SearchRequest):
 
                 # 计算 LAll 类别命中
                 category_hit = False
+                hit_category_names = []
+                result_category_names = []
                 if retrieval_lall is not None and query_lall_vector is not None and idx < len(retrieval_lall):
                     # 如果结果图像的 LAll 与查询 LAll 有交集，则类别命中
                     result_lall = retrieval_lall[idx]
                     # 检查是否有共同的类别
                     category_hit = np.any((result_lall > 0) & (query_lall_vector > 0))
+
+                    # 获取结果图像的所有类别索引
+                    result_category_indices = np.where(result_lall > 0)[0].tolist()
+                    result_category_names = dataset_service.get_category_names_from_lall_indices(result_category_indices)
+
+                    # 获取命中的类别索引（与查询 LAll 有交集的类别）
+                    if category_hit:
+                        hit_category_indices = np.where((result_lall > 0) & (query_lall_vector > 0))[0].tolist()
+                        hit_category_names = dataset_service.get_category_names_from_lall_indices(hit_category_indices)
 
                 # 获取标签名称
                 tag_names = dataset_service.get_tag_names_from_yall_indices(image_tags[:20])
@@ -370,11 +389,15 @@ async def search(request: SearchRequest):
                 # 生成缩略图 URL（从 .mat 文件加载图像）
                 thumbnail_url = f"/api/images/{image_id}?format=image&dataset={request.dataset}"
 
+                # 确保 distance 和 score 非负
+                distance = max(0.0, float(distances_flat[idx]))
+                score = float(1.0 / (1.0 + distance))
+
                 results.append(SearchResult(
                     rank=rank + 1,
                     image_id=image_id,
-                    score=float(1.0 / (1.0 + distances_flat[idx])),
-                    distance=float(distances_flat[idx]),
+                    score=score,
+                    distance=distance,
                     tags=image_tags[:20] if image_tags else [],
                     tag_names=tag_names,
                     hit_tags=hit_tags,
@@ -382,7 +405,9 @@ async def search(request: SearchRequest):
                     thumbnail_url=thumbnail_url,
                     hash_code=result_hash_code,
                     category_hit=category_hit,
-                    tag_hit=tag_hit
+                    tag_hit=tag_hit,
+                    category_names=result_category_names,
+                    hit_category_names=hit_category_names
                 ))
 
             # 计算命中率统计（包含两种命中率）
@@ -396,11 +421,7 @@ async def search(request: SearchRequest):
                 "category_hit_rate": total_category_hits / len(results) if results else 0,
                 # 查询信息
                 "query_tags": list(query_yall_indices),
-                "query_tag_names": query_tag_names,
-                # 兼容旧字段
-                "hits": total_tag_hits,
-                "hit_rate": total_tag_hits / len(results) if results else 0,
-                "query_tag_count": len(query_yall_indices)
+                "query_tag_names": query_tag_names
             }
 
         search_time_ms = (time.time() - start_time) * 1000
@@ -467,11 +488,6 @@ async def _build_demo_database(dataset: str = "flickr25k"):
     aspe_service.database_codes = demo_hash_codes
 
     logger.info(f"演示数据库构建完成 ({dataset})：{demo_hash_codes.shape}")
-
-
-def _generate_demo_query_code(bit_dim: int) -> np.ndarray:
-    """生成演示查询哈希码。"""
-    return np.sign(np.random.randn(1, bit_dim))
 
 
 def _process_base64_image(base64_str: str, dcmh_service, dataset_service) -> np.ndarray:

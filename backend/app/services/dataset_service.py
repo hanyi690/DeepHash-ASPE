@@ -265,6 +265,36 @@ class MatDatasetService:
         return [tag_names[i] if 0 <= i < len(tag_names) else f'tag_{i}'
                 for i in yall_indices]
 
+    def get_category_names(self) -> List[str]:
+        """
+        获取 LAll 类别名称列表。
+
+        返回 LAll 列索引对应的类别名称列表。
+        """
+        from config.dataset_config import get_dataset_config
+        try:
+            config = get_dataset_config(self.dataset_name)
+            categories = config.get('categories', [])
+            if categories:
+                return categories
+        except Exception:
+            pass
+        return [f'category_{i}' for i in range(self.l_dim)]
+
+    def get_category_names_from_lall_indices(self, lall_indices: List[int]) -> List[str]:
+        """
+        根据 LAll 索引获取类别名称。
+
+        参数：
+            lall_indices: LAll 列索引列表
+
+        返回：
+            类别名称列表
+        """
+        category_names = self.get_category_names()
+        return [category_names[i] if 0 <= i < len(category_names) else f'category_{i}'
+                for i in lall_indices]
+
     def get_original_image_id(self, idx: int) -> int:
         """
         将 .mat 文件索引转换为原始图像 ID。
@@ -450,11 +480,6 @@ def get_dataset_service(dataset_name: str = 'flickr25k', **kwargs) -> MatDataset
     if dataset_name not in _dataset_services:
         _dataset_services[dataset_name] = MatDatasetService(dataset_name=dataset_name)
     return _dataset_services[dataset_name]
-
-
-def get_all_dataset_services() -> Dict[str, MatDatasetService]:
-    """获取所有数据集服务实例。"""
-    return _dataset_services.copy()
 
 
 def get_y_dim_for_dataset(dataset_name: str) -> int:
