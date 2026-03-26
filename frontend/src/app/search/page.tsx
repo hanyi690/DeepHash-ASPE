@@ -2,86 +2,96 @@
 
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import axios from 'axios';
 import ImageUpload from '@/components/ImageUpload';
 import ResultsGrid from '@/components/ResultsGrid';
 import DatasetSelector from '@/components/DatasetSelector';
 import TagSelector from '@/components/TagSelector';
 import {
+  SearchMode,
+  EncryptionMode,
   DCMHDataset,
   CIRDataset,
-  getDatasetStatus,
-  DatasetStatus,
-  SearchResult,
+  unifiedSearch,
+  unifiedSearchUpload,
+  getUnifiedStatus,
+  getTagNames,
+  ServiceStatus,
+  TagToImageResult,
   ImageToTagResult,
+  ImageToImageResult,
   EncryptionInfo,
-  CIRSearchResult,
-  CIRStatus,
   HitStats,
 } from '@/lib/api';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-// 检索模式类型
-type SearchMode = 'tag_to_image' | 'image_to_tag' | 'image_to_image';
-
 export default function UnifiedSearchPage() {
   // 检索模式
   const [mode, setMode] = useState<SearchMode>('tag_to_image');
-  const [useEncrypted, setUseEncrypted] = useState(true);
+  const [encryption, setEncryption] = useState<EncryptionMode>('encrypted');
   const [topK, setTopK] = useState(10);
 
   // 数据集选择
   const [dcmhDataset, setDcmhDataset] = useState<DCMHDataset>('flickr25k');
   const [cirDataset, setCirDataset] = useState<CIRDataset>('roxford5k');
 
-  // 数据集状态
-  const [datasetStatus, setDatasetStatus] = useState<DatasetStatus | null>(null);
+  // 服务状态
+  const [serviceStatus, setServiceStatus] = useState<ServiceStatus | null>(null);
 
   // 查询输入
   const [selectedTags, setSelectedTags] = useState<number[]>([]);
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
 
   // 结果状态
   const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<SearchResult[]>([]);
-  const [tagResults, setTagResults] = useState<ImageToTagResult[]>([]);
-  const [cirResults, setCirResults] = useState<CIRSearchResult[]>([]);
+  const [tagToImageResults, setTagToImageResults] = useState<TagToImageResult[]>([]);
+  const [imageToTagResults, setImageToTagResults] = useState<ImageToTagResult[]>([]);
+  const [imageToImageResults, setImageToImageResults] = useState<ImageToImageResult[]>([]);
   const [error, setError] = useState('');
   const [encryptionInfo, setEncryptionInfo] = useState<EncryptionInfo | null>(null);
-  const [hitStats, setHitStats] = useState<any>(null);  // 命中率统计
+  const [hitStats, setHitStats] = useState<HitStats | null>(null);
+  const [searchTimeMs, setSearchTimeMs] = useState(0);
 
-  // CIR 服务状态
-  const [cirStatus, setCirStatus] = useState<CIRStatus | null>(null);
+  // 标签名称
+  const [tagNames, setTagNames] = useState<string[]>([]);
 
-  // 加载初始数据
+  // 加载标签名称
   useEffect(() => {
-    const fetchData = async () => {
+    const loadTagNames = async () => {
       try {
-        // 获取 CIR 状态
-        const cirRes = await axios.get(`${API_BASE}/api/cir/status`);
-        setCirStatus(cirRes.data);
+        const result = await getTagNames(dcmhDataset);
+        if (result.success) {
+          setTagNames(result.tag_names);
+        }
       } catch (err) {
-        console.error('获取 CIR 状态失败:', err);
+        console.error('加载标签名称失败:', err);
       }
     };
 
-    fetchData();
-  }, []);
+    if (mode !== 'image_to_image') {
+      loadTagNames();
+    }
+  }, [dcmhDataset, mode]);
 
-  // 当数据集变化时获取状态
+  // 获取服务状态
   useEffect(() => {
-    const fetchDatasetStatus = async () => {
+    const fetchStatus = async () => {
       try {
         const currentDataset = mode === 'image_to_image' ? cirDataset : dcmhDataset;
-        const status = await getDatasetStatus(currentDataset);
-        setDatasetStatus(status.status);
+        const status = await getUnifiedStatus(currentDataset);
+
+        if (mode === 'image_to_image') {
+          setServiceStatus(status.cir_status || null);
+        } else {
+          setServiceStatus(status.dcmh_status || null);
+        }
       } catch (err) {
-        console.error('获取数据集状态失败:', err);
+        console.error('获取服务状态失败:', err);
       }
     };
 
-    fetchDatasetStatus();
+    fetchStatus();
   }, [dcmhDataset, cirDataset, mode]);
 
   // 执行检索
@@ -92,26 +102,56 @@ export default function UnifiedSearchPage() {
       return;
     }
 
-    if ((mode === 'image_to_tag' || mode === 'image_to_image') && !uploadedImage) {
+    if ((mode === 'image_to_tag' || mode === 'image_to_image') && !uploadedFile) {
       setError('请上传查询图像');
       return;
     }
 
     setLoading(true);
     setError('');
-    setResults([]);
-    setTagResults([]);
-    setCirResults([]);
+    setTagToImageResults([]);
+    setImageToTagResults([]);
+    setImageToImageResults([]);
     setEncryptionInfo(null);
     setHitStats(null);
 
     try {
-      if (mode === 'image_to_image') {
-        // CIR 图搜图
-        await handleCIRSearch();
-      } else {
-        // DCMH 跨模态检索
-        await handleDCMHSearch();
+      const currentDataset = mode === 'image_to_image' ? cirDataset : dcmhDataset;
+
+      let response;
+
+      if (mode === 'tag_to_image') {
+        // 标签搜图（JSON 请求）
+        response = await unifiedSearch({
+          mode: mode,
+          encryption: encryption,
+          dataset: currentDataset,
+          top_k: topK,
+          tag_indices: selectedTags,
+        });
+      } else if (uploadedFile) {
+        // 图像检索（文件上传）
+        response = await unifiedSearchUpload(
+          uploadedFile,
+          mode,
+          encryption,
+          currentDataset,
+          topK
+        );
+      }
+
+      if (response) {
+        setSearchTimeMs(response.search_time_ms);
+        setEncryptionInfo(response.encryption_info || null);
+        setHitStats(response.hit_stats || null);
+
+        if (mode === 'tag_to_image') {
+          setTagToImageResults(response.results as TagToImageResult[]);
+        } else if (mode === 'image_to_tag') {
+          setImageToTagResults(response.tag_results);
+        } else {
+          setImageToImageResults(response.results as ImageToImageResult[]);
+        }
       }
     } catch (err: any) {
       setError(err.response?.data?.detail || '检索失败，请重试');
@@ -120,80 +160,9 @@ export default function UnifiedSearchPage() {
     }
   };
 
-  // DCMH 跨模态检索
-  const handleDCMHSearch = async () => {
-    // 如果是图搜标签模式，需要将 blob URL 转换为 base64
-    let queryImageData: string | undefined = undefined;
-    if (mode === 'image_to_tag' && uploadedImage) {
-      // 从 blob URL 获取图像数据并转换为 base64
-      const response = await fetch(uploadedImage);
-      const blob = await response.blob();
-      queryImageData = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.readAsDataURL(blob);
-      });
-    }
-
-    const response = await axios.post(`${API_BASE}/api/search`, {
-      query_type: mode,
-      tag_indices: mode === 'tag_to_image' ? selectedTags : undefined,
-      query_image: queryImageData,
-      dataset: dcmhDataset,
-      top_k: topK,
-      use_encrypted: useEncrypted,
-    });
-
-    setEncryptionInfo(response.data.encryption_info || null);
-    setHitStats(response.data.hit_stats || null);
-
-    if (mode === 'image_to_tag') {
-      setTagResults(response.data.tag_results || []);
-    } else {
-      setResults(response.data.results || []);
-    }
-  };
-
-  // CIR 图搜图
-  const handleCIRSearch = async () => {
-    if (!uploadedImage) return;
-
-    // uploadedImage 是本地 blob URL（来自 ImageUpload 组件的预览）
-    // 直接 fetch 获取图像二进制数据
-    const response = await fetch(uploadedImage);
-    const blob = await response.blob();
-    const file = new File([blob], 'query.jpg', { type: 'image/jpeg' });
-
-    const formData = new FormData();
-    formData.append('image', file);
-    formData.append('dataset', cirDataset);
-    formData.append('top_k', topK.toString());
-
-    const endpoint = useEncrypted
-      ? `${API_BASE}/api/cir/sknn/search/upload`
-      : `${API_BASE}/api/cir/search/upload`;
-
-    const res = await axios.post(endpoint, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-
-    setEncryptionInfo(
-      useEncrypted
-        ? {
-            method: 'SkNN',
-            query_encrypted: true,
-            database_encrypted: true,
-            security_level: 2,
-            bit_dim: cirStatus?.feature_dim || 2048,
-          }
-        : null
-    );
-    setCirResults(res.data.results || []);
-  };
-
   // 图像上传回调
   const handleImageSelected = (file: File) => {
-    console.log('图像已选择:', file.name);
+    setUploadedFile(file);
   };
 
   const handleImageUploaded = (imageUrl: string) => {
@@ -202,21 +171,11 @@ export default function UnifiedSearchPage() {
 
   const handleImageCleared = () => {
     setUploadedImage(null);
+    setUploadedFile(null);
   };
 
-  // 获取模式标题
-  const getModeTitle = () => {
-    switch (mode) {
-      case 'tag_to_image':
-        return '标签搜图';
-      case 'image_to_tag':
-        return '图搜标签';
-      case 'image_to_image':
-        return '图搜图';
-      default:
-        return '跨模态检索';
-    }
-  };
+  // 获取当前数据集
+  const getCurrentDataset = () => mode === 'image_to_image' ? cirDataset : dcmhDataset;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -243,12 +202,7 @@ export default function UnifiedSearchPage() {
             >
               <div className="flex items-center space-x-2">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"
-                  />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
                 </svg>
                 <span>标签搜图</span>
               </div>
@@ -263,12 +217,7 @@ export default function UnifiedSearchPage() {
             >
               <div className="flex items-center space-x-2">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-                  />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                 </svg>
                 <span>图搜标签</span>
               </div>
@@ -283,12 +232,7 @@ export default function UnifiedSearchPage() {
             >
               <div className="flex items-center space-x-2">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
-                  />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
                 <span>图搜图</span>
               </div>
@@ -311,25 +255,21 @@ export default function UnifiedSearchPage() {
           )}
         </div>
 
-        {/* 数据集状态 */}
-        {datasetStatus && (
+        {/* 服务状态 */}
+        {serviceStatus && (
           <div className="mb-4 p-3 bg-gray-50 rounded-lg flex items-center gap-4 text-sm">
             <div className="flex items-center gap-2">
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  datasetStatus.cache_loaded ? 'bg-green-500' : 'bg-yellow-500'
-                }`}
-              />
+              <span className={`w-2 h-2 rounded-full ${serviceStatus.initialized ? 'bg-green-500' : 'bg-yellow-500'}`} />
               <span className="text-gray-600">
-                {datasetStatus.cache_loaded ? '缓存已加载' : '缓存未加载'}
+                {serviceStatus.initialized ? '服务就绪' : '服务初始化中'}
               </span>
             </div>
             <div className="text-gray-500">
-              数据库大小: {datasetStatus.database_size}
+              索引大小: {serviceStatus.index_size}
             </div>
-            {datasetStatus.gpu_available && (
-              <div className="text-gray-500">
-                GPU: {datasetStatus.gpu_name}
+            {serviceStatus.keys_loaded && (
+              <div className="text-emerald-600">
+                密钥已加载
               </div>
             )}
           </div>
@@ -337,15 +277,12 @@ export default function UnifiedSearchPage() {
 
         {/* 查询输入区域 */}
         {mode === 'tag_to_image' ? (
-          <div>
-            {/* 标签选择器 */}
-            <TagSelector
-              dataset={dcmhDataset}
-              selectedTags={selectedTags}
-              onChange={setSelectedTags}
-              placeholder="搜索并选择标签..."
-            />
-          </div>
+          <TagSelector
+            dataset={dcmhDataset}
+            selectedTags={selectedTags}
+            onChange={setSelectedTags}
+            placeholder="搜索并选择标签..."
+          />
         ) : (
           <ImageUpload
             onImageSelected={handleImageSelected}
@@ -356,14 +293,14 @@ export default function UnifiedSearchPage() {
 
         {/* 检索选项 */}
         <div className="flex items-center gap-6 mt-4 mb-4">
-          {/* 检索模式 */}
+          {/* 加密模式 */}
           <div className="flex items-center gap-2">
             <span className="text-sm text-gray-600">检索模式：</span>
             <div className="flex space-x-2 p-1 bg-gray-100 rounded-lg">
               <button
-                onClick={() => setUseEncrypted(true)}
+                onClick={() => setEncryption('encrypted')}
                 className={`px-3 py-1 rounded-md text-sm transition-all ${
-                  useEncrypted
+                  encryption === 'encrypted'
                     ? 'bg-white text-[#6366F1] shadow-sm'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
@@ -371,9 +308,9 @@ export default function UnifiedSearchPage() {
                 隐私保护
               </button>
               <button
-                onClick={() => setUseEncrypted(false)}
+                onClick={() => setEncryption('plaintext')}
                 className={`px-3 py-1 rounded-md text-sm transition-all ${
-                  !useEncrypted
+                  encryption === 'plaintext'
                     ? 'bg-white text-[#6366F1] shadow-sm'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
@@ -407,41 +344,16 @@ export default function UnifiedSearchPage() {
         >
           {loading ? (
             <span className="flex items-center justify-center">
-              <svg
-                className="animate-spin -ml-1 mr-3 h-5 w-5 text-white"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                />
+              <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
               </svg>
               检索中...
             </span>
           ) : (
             <span className="flex items-center justify-center">
-              <svg
-                className="w-5 h-5 mr-2"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                />
+              <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
               开始检索
             </span>
@@ -452,18 +364,8 @@ export default function UnifiedSearchPage() {
       {/* 错误提示 */}
       {error && (
         <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 flex items-start">
-          <svg
-            className="w-5 h-5 mr-2 flex-shrink-0 mt-0.5"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-            />
+          <svg className="w-5 h-5 mr-2 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           {error}
         </div>
@@ -479,42 +381,24 @@ export default function UnifiedSearchPage() {
           <div className="flex items-center justify-between flex-wrap gap-4">
             <div className="flex items-center space-x-3">
               <div className="w-10 h-10 rounded-full bg-[#6366F1]/20 flex items-center justify-center">
-                <svg
-                  className="w-5 h-5 text-[#6366F1]"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-                  />
+                <svg className="w-5 h-5 text-[#6366F1]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                 </svg>
               </div>
               <div>
                 <p className="font-medium text-gray-800">隐私保护检索已启用</p>
                 <p className="text-sm text-gray-600">
-                  {encryptionInfo.method} · {encryptionInfo.bit_dim} 位
+                  {encryptionInfo.method} · {encryptionInfo.bit_dim || encryptionInfo.feature_dim} 维
                 </p>
               </div>
             </div>
             <div className="flex items-center space-x-4 text-sm">
               <div className="flex items-center space-x-1">
-                <span
-                  className={`w-2 h-2 rounded-full ${
-                    encryptionInfo.query_encrypted ? 'bg-green-500' : 'bg-gray-300'
-                  }`}
-                />
+                <span className={`w-2 h-2 rounded-full ${encryptionInfo.query_encrypted ? 'bg-green-500' : 'bg-gray-300'}`} />
                 <span className="text-gray-600">查询加密</span>
               </div>
               <div className="flex items-center space-x-1">
-                <span
-                  className={`w-2 h-2 rounded-full ${
-                    encryptionInfo.database_encrypted ? 'bg-green-500' : 'bg-gray-300'
-                  }`}
-                />
+                <span className={`w-2 h-2 rounded-full ${encryptionInfo.database_encrypted ? 'bg-green-500' : 'bg-gray-300'}`} />
                 <span className="text-gray-600">数据库加密</span>
               </div>
             </div>
@@ -522,35 +406,41 @@ export default function UnifiedSearchPage() {
         </motion.div>
       )}
 
-      {/* 检索结果 - 标签搜图 */}
-      {results.length > 0 && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.3 }}
-        >
-          <ResultsGrid results={results} searchTime={0} hitStats={hitStats} />
+      {/* 标签搜图结果 */}
+      {tagToImageResults.length > 0 && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }}>
+          <ResultsGrid
+            results={tagToImageResults.map(r => ({
+              rank: r.rank,
+              image_id: parseInt(r.image_id),
+              score: r.score,
+              distance: r.distance,
+              tags: r.tags,
+              tag_names: r.tag_names,
+              hit_tags: r.hit_tags,
+              hit_tag_names: r.hit_tag_names,
+              thumbnail_url: r.thumbnail_url,
+              hash_code: r.hash_code,
+              category_hit: r.category_hit,
+              tag_hit: r.tag_hit,
+              category_names: r.category_names,
+              hit_category_names: r.hit_category_names,
+            }))}
+            searchTime={searchTimeMs}
+            hitStats={hitStats}
+          />
         </motion.div>
       )}
 
       {/* 图搜标签结果 */}
-      {tagResults.length > 0 && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.3 }}
-          className="card"
-        >
+      {imageToTagResults.length > 0 && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }} className="card">
           <h3 className="text-lg font-semibold text-gray-800 mb-4">
             检索结果 - 相关标签
           </h3>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-            {tagResults.map((result) => (
-              <div
-                key={result.rank}
-                className="bg-gray-50 rounded-lg p-4 text-center"
-              >
-                {/* 缩略图 */}
+            {imageToTagResults.map((result) => (
+              <div key={result.rank} className="bg-gray-50 rounded-lg p-4 text-center">
                 {result.thumbnail_url && (
                   <div className="mb-3">
                     <img
@@ -558,7 +448,7 @@ export default function UnifiedSearchPage() {
                       alt={`来源图像 ${result.image_id}`}
                       className="w-full h-24 object-cover rounded-lg mx-auto"
                       onError={(e) => {
-                        (e.target as HTMLImageElement).src = '/placeholder.png';
+                        (e.target as HTMLImageElement).style.display = 'none';
                       }}
                     />
                   </div>
@@ -567,42 +457,28 @@ export default function UnifiedSearchPage() {
                   来源图像: {result.image_id}
                 </div>
                 <div className="flex flex-wrap gap-1 justify-center mb-2">
-                  {(result.tag_names || result.tags.slice(0, 5)).map((tag, idx) => (
-                    <span
-                      key={idx}
-                      className="px-2 py-0.5 bg-[#6366F1]/10 text-[#6366F1] rounded text-xs"
-                    >
+                  {result.tag_names.slice(0, 5).map((tag, idx) => (
+                    <span key={idx} className="px-2 py-0.5 bg-[#6366F1]/10 text-[#6366F1] rounded text-xs">
                       {tag}
                     </span>
                   ))}
-                  {(result.tag_names?.length || result.tags.length) > 5 && (
-                    <span className="text-xs text-gray-500">
-                      +{(result.tag_names?.length || result.tags.length) - 5}
-                    </span>
+                  {result.tag_names.length > 5 && (
+                    <span className="text-xs text-gray-500">+{result.tag_names.length - 5}</span>
                   )}
                 </div>
-                {/* 类别名称显示 */}
                 {result.category_names && result.category_names.length > 0 && (
                   <div className="pt-2 border-t border-gray-200 mt-2">
                     <p className="text-xs text-gray-500 mb-1">类别</p>
                     <div className="flex flex-wrap gap-1 justify-center">
                       {result.category_names.slice(0, 4).map((name, i) => (
-                        <span
-                          key={i}
-                          className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs"
-                        >
+                        <span key={i} className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs">
                           {name}
                         </span>
                       ))}
-                      {result.category_names.length > 4 && (
-                        <span className="text-xs text-gray-400">
-                          +{result.category_names.length - 4}
-                        </span>
-                      )}
                     </div>
                   </div>
                 )}
-                <div className="text-xs text-gray-500">
+                <div className="text-xs text-gray-500 mt-2">
                   得分: {result.score.toFixed(4)}
                 </div>
               </div>
@@ -611,26 +487,38 @@ export default function UnifiedSearchPage() {
         </motion.div>
       )}
 
-      {/* CIR 图搜图结果 */}
-      {cirResults.length > 0 && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.3 }}
-        >
-          <ResultsGrid
-            results={cirResults.map((r) => ({
-              rank: r.rank,
-              image_id: r.rank,
-              score: r.score,
-              distance: Math.max(0, 1 - r.score),
-              tags: [],
-              tag_names: [],
-              hit_tags: [],
-              hit_tag_names: [],
-              thumbnail_url: r.image_url,
-            }))}
-          />
+      {/* 图搜图结果 */}
+      {imageToImageResults.length > 0 && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }}>
+          <div className="mb-4 flex items-center justify-between">
+            <span className="text-sm text-gray-600">
+              检索完成，耗时 <span className="font-mono font-semibold text-[#6366F1]">{searchTimeMs.toFixed(2)}</span> ms
+            </span>
+            <span className="badge-primary">共 {imageToImageResults.length} 个结果</span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+            {imageToImageResults.map((result) => (
+              <div key={result.rank} className="card group cursor-pointer hover:shadow-lg transition-all">
+                <div className="relative bg-gray-100 rounded-xl h-40 mb-3 overflow-hidden">
+                  {result.thumbnail_url ? (
+                    <img
+                      src={`${API_BASE}${result.thumbnail_url}`}
+                      alt={`结果 ${result.rank}`}
+                      className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-300"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <span className="text-gray-400">图像 {result.image_name}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">#{result.rank}</span>
+                  <span className="text-sm text-[#6366F1] font-mono">{(result.score * 100).toFixed(1)}%</span>
+                </div>
+              </div>
+            ))}
+          </div>
         </motion.div>
       )}
 

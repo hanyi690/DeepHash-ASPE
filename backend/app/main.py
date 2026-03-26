@@ -16,7 +16,8 @@ import torch
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # 导入路由
-from app.routers import images, texts, hash_codes, encrypt, search, metrics, cir_retrieval, tags, datasets
+from app.routers import images, texts, hash_codes, encrypt, tags, datasets
+from app.routers import unified_search
 
 # 导入数据集配置
 from config.dataset_config import DATA_ROOT
@@ -67,9 +68,7 @@ app.include_router(images.router)
 app.include_router(texts.router)
 app.include_router(hash_codes.router)
 app.include_router(encrypt.router)
-app.include_router(search.router)
-app.include_router(metrics.router)
-app.include_router(cir_retrieval.router)
+app.include_router(unified_search.router)  # 统一检索端点
 app.include_router(tags.router)
 app.include_router(datasets.router)
 
@@ -110,7 +109,7 @@ async def startup_event():
     # 初始化服务
     try:
         from app.services.dcmh_service import get_dcmh_service
-        from app.services.aspe_service import get_aspe_service
+        from app.services.dcmh_encryption_service import get_dcmh_encryption_service
         from app.services.dataset_service import get_dataset_service
 
         # 初始化 DCMH 服务
@@ -119,15 +118,16 @@ async def startup_event():
         print(f"  - 哈希码维度：{dcmh_service.bit_dim}")
         print(f"  - 运行设备：{dcmh_service.device}")
 
-        # 初始化 ASPE 服务
-        print("正在初始化 ASPE 服务...")
-        aspe_service = get_aspe_service(bit_dim=64, seed=42)
-        print(f"  - ASPE 密钥种子：{aspe_service.seed}")
+        # 初始化 DCMH 加密服务
+        print("正在初始化 DCMH 加密服务...")
+        dcmh_encryption = get_dcmh_encryption_service(bit_dim=64)
+        dcmh_encryption.load_keys()
+        print(f"  - 密钥已加载：{dcmh_encryption.has_keys()}")
 
         # 初始化数据集服务
         print("正在初始化数据集服务...")
         dataset_service = get_dataset_service()
-        print(f"  - 默认数据路径：{dataset_service.data_path}")
+        print(f"  - 默认数据路径：{DATA_ROOT}")
 
         print("=" * 50)
         print("服务初始化完成")

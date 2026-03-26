@@ -187,34 +187,6 @@ class SearchResponse(BaseModel):
 
 # ============== 指标相关模式 ==============
 
-class MetricsRequest(BaseModel):
-    """指标计算请求。"""
-    k: Optional[int] = Field(default=None, description="截断位置")
-    num_queries: int = Field(default=100, ge=1, le=1000)
-
-
-class MetricsResponse(BaseModel):
-    """指标响应。"""
-    success: bool
-    plaintext_i2t_map: float = 0.0
-    plaintext_t2i_map: float = 0.0
-    ciphertext_i2t_map: float = 0.0
-    ciphertext_t2i_map: float = 0.0
-    i2t_difference: float = 0.0
-    t2i_difference: float = 0.0
-    consistent: bool = True
-    num_queries: int = 0
-    computation_time_ms: float = 0.0
-
-
-class SystemStatus(BaseModel):
-    """系统状态响应。"""
-    success: bool
-    dcmh_status: Dict[str, Any]
-    aspe_status: Dict[str, Any]
-    dataset_status: Dict[str, Any]
-
-
 # ============== 标签相关模式 ==============
 
 class TagsResponse(BaseModel):

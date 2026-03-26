@@ -1,7 +1,5 @@
 # DeepHash-ASPE：隐私保护跨模态检索系统
 
-一个结合了深度学习哈希与非对称标量积保持加密（ASPE）的隐私保护图文检索系统。
-
 ## 功能特性
 
 - **跨模态检索**：文本 ↔ 图像搜索（DCMH 深度跨模态哈希）
@@ -23,8 +21,8 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                     FastAPI 后端                              │
 │  API: /api/images | /api/texts | /api/hash | /api/encrypt  │
-│       /api/search | /api/cir | /api/metrics                 │
-│       /cir-images (静态文件服务)                             │
+│       /api/search (统一检索) | /api/tags | /api/datasets   │
+│       /cir-images | /flickr-images (静态文件服务)           │
 └─────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -845,13 +843,42 @@ interface EncryptionInfo {
 
 ## API 端点
 
-| 端点                            | 方法 | 描述          |
-| ------------------------------- | ---- | ------------- |
-| `/api/images/upload`          | POST | 上传图像      |
-| `/api/search`                 | POST | 跨模态检索    |
-| `/api/cir/search/upload`      | POST | CNN 图像检索  |
-| `/api/cir/sknn/search/upload` | POST | SkNN 隐私检索 |
-| `/api/metrics`                | GET  | 获取评估指标  |
+### 统一检索端点（推荐）
+
+| 端点                     | 方法 | 描述                  |
+| ------------------------ | ---- | --------------------- |
+| `/api/search`          | POST | 统一检索（JSON 请求） |
+| `/api/search/upload`   | POST | 统一检索（文件上传）  |
+| `/api/search/status`   | GET  | 获取服务状态          |
+| `/api/search/datasets` | GET  | 获取支持的数据集列表  |
+
+### 检索模式说明
+
+| 模式               | 数据集              | 描述             |
+| ------------------ | ------------------- | ---------------- |
+| `tag_to_image`   | flickr25k, nuswide  | 标签搜图（DCMH） |
+| `image_to_tag`   | flickr25k, nuswide  | 图搜标签（DCMH） |
+| `image_to_image` | roxford5k, rparis6k | 图搜图（CIR）    |
+
+### 统一请求格式
+
+```json
+{
+  "mode": "tag_to_image",
+  "encryption": "encrypted",
+  "dataset": "flickr25k",
+  "top_k": 10,
+  "tag_indices": [0, 1, 2]
+}
+```
+
+### 其他端点
+
+| 端点                 | 方法 | 描述         |
+| -------------------- | ---- | ------------ |
+| `/api/images/{id}` | GET  | 获取图像     |
+| `/api/tags/names`  | GET  | 获取标签列表 |
+| `/api/encrypt/status` | GET | 获取加密服务状态 |
 
 ## 性能
 
@@ -901,6 +928,134 @@ interface EncryptionInfo {
 
 ## 更新日志
 
+### 2026-03-27: 清理冗余代码和统一架构完善
+
+**目标**：完成统一架构重构后的清理工作，移除不再使用的旧实现。
+
+**删除的文件**：
+
+| 文件 | 原因 |
+|------|------|
+| `backend/app/routers/search.py` | 被 unified_search.py 替代 |
+| `backend/app/routers/cir_retrieval.py` | 被 unified_search.py 替代 |
+| `backend/app/routers/metrics.py` | 前端未调用 |
+| `backend/app/services/aspe_service.py` | 被 dcmh_encryption_service.py 替代 |
+| `frontend/src/components/MetricsChart.tsx` | 未被使用 |
+
+**更新的文件**：
+
+| 文件 | 变更 |
+|------|------|
+| `backend/app/main.py` | 移除旧路由注册，仅保留统一端点 |
+| `backend/app/routers/encrypt.py` | 改用 DCMHEncryptionService |
+| `backend/app/routers/metrics.py` | 已删除 |
+| `backend/app/schemas/search.py` | 移除未使用的 schema |
+| `backend/app/schemas/__init__.py` | 更新导出 |
+| `backend/app/services/__init__.py` | 更新服务导出 |
+
+**当前路由结构**：
+
+```
+app.include_router(images.router)
+app.include_router(texts.router)
+app.include_router(hash_codes.router)
+app.include_router(encrypt.router)
+app.include_router(unified_search.router)  # 统一检索端点
+app.include_router(tags.router)
+app.include_router(datasets.router)
+```
+
+**保留的底层服务**：
+
+| 服务 | 作用 | 被谁使用 |
+|------|------|----------|
+| `dcmh_service.py` | DCMH 模型加载、哈希码生成 | `dcmh_search_service.py` |
+| `cir_service.py` | CNN 模型加载、特征提取 | `cir_search_service.py` |
+| `hash_cache_service.py` | 哈希码缓存管理 | `dcmh_search_service.py` |
+
+### 2026-03-27: 统一 DCMH 和 CIR 系统架构
+
+**目标**：统一 DCMH 跨模态检索和 CIR 图像检索两个子系统的架构，提高代码一致性和可维护性。
+
+**主要变更**：
+
+1. **统一类型定义**（`backend/app/schemas/unified.py`）：
+
+   - `SearchMode` 枚举：`tag_to_image`、`image_to_tag`、`image_to_image`
+   - `EncryptionMode` 枚举：`plaintext`、`encrypted`
+   - 统一结果类型：`BaseSearchResult`、`TagToImageResult`、`ImageToTagResult`、`ImageToImageResult`
+   - 统一请求/响应类型：`UnifiedSearchRequest`、`UnifiedSearchResponse`
+2. **加密服务抽象**：
+
+   - `BaseEncryptionService`：加密服务抽象基类
+   - `DCMHEncryptionService`：DCMH 哈希码加密服务
+   - `CIREncryptionService`：CIR CNN 特征加密服务
+3. **检索服务抽象**：
+
+   - `BaseSearchService`：检索服务抽象基类
+   - `DCMHSearchService`：DCMH 跨模态检索服务
+   - `CIRSearchService`：CIR 图像检索服务
+   - `SearchServiceFactory`：服务工厂
+4. **统一端点**（`backend/app/routers/unified_search.py`）：
+
+   - `POST /api/search`：JSON 请求
+   - `POST /api/search/upload`：文件上传
+   - `GET /api/search/status`：服务状态
+   - `GET /api/search/datasets`：数据集列表
+5. **前端统一**（`frontend/src/lib/api.ts`）：
+
+   - 统一类型定义与后端一致
+   - `unifiedSearch()`：JSON 请求
+   - `unifiedSearchUpload()`：文件上传
+
+**新架构**：
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      前端 (Next.js)                          │
+│  unifiedSearch() / unifiedSearchUpload()                    │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│                 统一端点 /api/search                         │
+│  mode: tag_to_image | image_to_tag | image_to_image        │
+│  encryption: plaintext | encrypted                          │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│                  SearchServiceFactory                        │
+└─────────────────────────────────────────────────────────────┘
+                    ↓                       ↓
+┌──────────────────────────┐    ┌──────────────────────────┐
+│   DCMHSearchService      │    │   CIRSearchService       │
+│   (flickr25k, nuswide)   │    │   (roxford5k, rparis6k) │
+├──────────────────────────┤    ├──────────────────────────┤
+│ - DCMHEncryptionService  │    │ - CIREncryptionService   │
+│ - DCMHService (特征)     │    │ - CIRService (特征)      │
+└──────────────────────────┘    └──────────────────────────┘
+```
+
+**文件变更**：
+
+| 文件                                                | 操作   |
+| --------------------------------------------------- | ------ |
+| `backend/app/schemas/unified.py`                  | 新建   |
+| `backend/app/services/base_encryption_service.py` | 新建   |
+| `backend/app/services/base_search_service.py`     | 新建   |
+| `backend/app/services/dcmh_encryption_service.py` | 新建   |
+| `backend/app/services/cir_encryption_service.py`  | 新建   |
+| `backend/app/services/dcmh_search_service.py`     | 新建   |
+| `backend/app/services/cir_search_service.py`      | 新建   |
+| `backend/app/routers/unified_search.py`           | 新建   |
+| `frontend/src/lib/api.ts`                         | 重构   |
+| `frontend/src/app/search/page.tsx`                | 重构   |
+| `backend/app/main.py`                             | 修改   |
+| `backend/app/routers/search.py`                   | 已删除 |
+| `backend/app/routers/cir_retrieval.py`            | 已删除 |
+| `backend/app/routers/metrics.py`                  | 已删除 |
+| `backend/app/services/aspe_service.py`            | 已删除 |
+| `frontend/src/components/MetricsChart.tsx`        | 已删除 |
+
 ### 2026-03-26: 加密检索数据库修复
 
 **问题**：图像→标签检索时，加密模式使用了错误的数据库（加密的图像哈希码而非加密的文本哈希码），导致明文和密文检索结果不一致。
@@ -940,11 +1095,11 @@ backend/cache/dcmh/flickr25k/
 
 **验证结果**：
 
-| 指标           | 值      |
-| -------------- | ------- |
-| Top-10 交集率  | 100%    |
-| Top-50 交集率  | 100%    |
-| Top-100 交集率 | 100%    |
+| 指标           | 值   |
+| -------------- | ---- |
+| Top-10 交集率  | 100% |
+| Top-50 交集率  | 100% |
+| Top-100 交集率 | 100% |
 
 ### 2026-03-26: 图像预处理修复
 
@@ -958,12 +1113,12 @@ backend/cache/dcmh/flickr25k/
 
 **预处理流程对比**：
 
-| 步骤 | 训练时 | 检索时（修复后） |
-|------|--------|------------------|
-| 加载图像 | h5 直接加载 | PIL resize |
-| 预处理 | 无 | 无 |
-| forward | 减 mean | 减 mean |
-| 总减均值次数 | 1次 | 1次 |
+| 步骤         | 训练时      | 检索时（修复后） |
+| ------------ | ----------- | ---------------- |
+| 加载图像     | h5 直接加载 | PIL resize       |
+| 预处理       | 无          | 无               |
+| forward      | 减 mean     | 减 mean          |
+| 总减均值次数 | 1次         | 1次              |
 
 ### 2026-03-26: README 重写
 
