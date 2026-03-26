@@ -91,46 +91,26 @@ class DCMHTextDataset(Dataset):
     DCMH 文本标签数据集。
 
     存储 multi-hot 标签向量。
-    零均值归一化是 DCMH 训练的必要预处理，有助于稳定训练。
+    注意：实际训练时直接从 H5 文件读取数据，不调用 __getitem__。
     """
 
-    def __init__(self, h5_path, indices=None, normalize=True):
+    def __init__(self, h5_path, indices=None):
         """
         初始化数据集。
 
         参数：
             h5_path: FLICKR-25K.mat 文件路径
             indices: 要使用的样本索引
-            normalize: 是否对文本特征进行零均值归一化（默认 True，稳定训练）
         """
         self.h5_path = h5_path
         self.indices = indices
-        self.normalize = normalize
         self._h5_file = None
-        self._mean = None
 
     @property
     def h5_file(self):
         if self._h5_file is None:
             self._h5_file = h5py.File(self.h5_path, 'r')
         return self._h5_file
-
-    def _compute_mean(self):
-        """
-        计算每个标签维度的均值（零均值归一化）。
-
-        与 MATLAB 的 normZeroMean 函数一致：
-        mu = mean(X);  % 每个标签维度的出现频率
-        X = X - mu;    % 零均值化
-        """
-        if self._mean is None:
-            # 读取所有训练数据的文本特征
-            if self.indices is not None:
-                YAll = self.h5_file['YAll'][self.indices]
-            else:
-                YAll = self.h5_file['YAll'][:]
-            self._mean = YAll.mean(axis=0)  # [y_dim]
-        return self._mean
 
     def __len__(self):
         if self.indices is not None:
@@ -156,11 +136,6 @@ class DCMHTextDataset(Dataset):
         tags = self.h5_file['YAll'][actual_idx]
         labels = self.h5_file['LAll'][actual_idx]
 
-        # 零均值归一化（与 MATLAB 的 normZeroMean 一致）
-        if self.normalize:
-            mean = self._compute_mean()
-            tags = tags - mean
-
         # 转换为 tensor 并添加维度 [1, y_dim, 1]
         tags_tensor = torch.from_numpy(tags).float().unsqueeze(0).unsqueeze(-1)
         labels_tensor = torch.from_numpy(labels).float()
@@ -169,7 +144,6 @@ class DCMHTextDataset(Dataset):
         return tags_tensor, labels_tensor, idx
 
     def __del__(self):
-        
         try:
             if self._h5_file is not None:
                 self._h5_file.close()

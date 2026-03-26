@@ -16,10 +16,14 @@ import sys
 import io
 import logging
 
+import torch
+
 from PIL import Image
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from config.dataset_config import get_cir_dataset_config, check_cir_dataset_exists
 
 from app.services.cir_service import get_cir_service, CIRService
 from app.services.hash_cache_service import get_hash_cache_service
@@ -28,6 +32,20 @@ from core.aspe.cnn_wrapper import ASPEForCNN
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/cir", tags=["CNN Image Retrieval"])
+
+
+def _generate_image_url(dataset: str, image_name: str) -> str:
+    """
+    生成 CIR 图像的访问 URL。
+
+    Args:
+        dataset: 数据集名称 (roxford5k/rparis6k)
+        image_name: 图像文件名
+
+    Returns:
+        图像的访问 URL
+    """
+    return f"/cir-images/{dataset}/jpg/{image_name}"
 
 # 缓存初始化标志
 _cir_cache_initialized = False
@@ -38,6 +56,10 @@ async def ensure_cir_cache_initialized(dataset: str = "roxford5k"):
     """
     确保 CIR 缓存已初始化。
 
+    优先级：
+    1. 从缓存加载（如果存在）
+    2. 从数据集目录实时构建（如果缓存不存在但数据集存在）
+
     参数：
         dataset: 数据集名称（roxford5k 或 rparis6k）
     """
@@ -45,32 +67,104 @@ async def ensure_cir_cache_initialized(dataset: str = "roxford5k"):
 
     # 如果已初始化且数据集相同，直接返回
     if _cir_cache_initialized and _current_dataset == dataset:
+        logger.info(f"[CIR] 数据集 {dataset} 已初始化，跳过")
         return
 
-    try:
-        hash_cache = get_hash_cache_service()
-        cir_service = get_cir_service()
+    logger.info(f"[CIR] 开始初始化数据集: {dataset}")
+    cir_service = get_cir_service()
+    hash_cache = get_hash_cache_service()
 
-        # 检查缓存是否存在
+    # 首先确保模型已加载（检索时需要提取查询特征）
+    if cir_service.model is None:
+        model_path = Path("data/networks/gl18-tl-resnet101-gem-w-a4d43db.pth")
+        if not model_path.exists():
+            # 尝试相对路径
+            model_path = Path(__file__).parent.parent.parent.parent / "data" / "networks" / "gl18-tl-resnet101-gem-w-a4d43db.pth"
+
+        if model_path.exists():
+            logger.info(f"[CIR] 加载模型: {model_path}")
+            cir_service.load_model(str(model_path))
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail=f"CIR 模型不存在，请先下载: python scripts/download_cir_model.py --model gl18-resnet101-gem-w"
+            )
+
+    # 尝试从缓存加载
+    try:
+        logger.info(f"[CIR] 尝试从缓存加载...")
         if hash_cache.cir_cache_exists(dataset, "features"):
             features, image_names = hash_cache.load_cir_features(dataset)
-            if features is not None:
-                cir_service.db_features = torch.from_numpy(features)
+            if features is not None and image_names is not None:
+                # 加载明文特征
+                cir_service.db_plaintext_features = torch.from_numpy(features)
                 cir_service.db_image_names = image_names
                 logger.info(f"[CIR] 从缓存加载数据集 {dataset}: {len(image_names)} 张图像")
 
                 # 加载加密缓存
                 encrypted = hash_cache.load_cir_encrypted(dataset)
                 if encrypted is not None:
-                    cir_service.db_features = torch.from_numpy(encrypted)
+                    cir_service.db_encrypted_features = torch.from_numpy(encrypted)
                     logger.info(f"[CIR] 从缓存加载加密数据: {encrypted.shape}")
+                else:
+                    logger.warning(f"[CIR] 加密缓存不存在，将仅支持明文检索")
 
-        _cir_cache_initialized = True
-        _current_dataset = dataset
-
+                _cir_cache_initialized = True
+                _current_dataset = dataset
+                logger.info(f"[CIR] 数据集 {dataset} 初始化完成")
+                return
+            else:
+                logger.warning(f"[CIR] 缓存数据不完整: features={features is not None}, image_names={image_names is not None}")
+        else:
+            logger.info(f"[CIR] 缓存不存在，尝试从数据集目录构建")
     except Exception as e:
-        logger.error(f"[CIR] 缓存初始化失败: {str(e)}")
-        _cir_cache_initialized = True  # 允许继续运行
+        logger.error(f"[CIR] 缓存加载失败: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+    # 缓存不存在或加载失败，尝试从数据集目录实时构建
+    try:
+        exists, path, message = check_cir_dataset_exists(dataset)
+        if not exists:
+            raise HTTPException(
+                status_code=503,
+                detail=f"CIR 数据集不存在: {message}，请运行: python scripts/build_all_cache.py --type cir --dataset {dataset}"
+            )
+
+        logger.info(f"[CIR] 数据集已验证: {path}")
+        config = get_cir_dataset_config(dataset)
+        image_dir = str(config['images_dir'])
+        logger.info(f"[CIR] 图像目录: {image_dir}")
+
+        # 模型已在函数开头加载，直接构建特征缓存
+        logger.info(f"[CIR] 开始构建特征缓存...")
+        # 构建数据库并保存缓存
+        features, image_names = hash_cache.build_cir_cache(
+            cir_service=cir_service,
+            image_dir=image_dir,
+            dataset=dataset,
+            force_rebuild=False
+        )
+        if features is not None:
+            # 新版服务使用 db_plaintext_features
+            cir_service.db_plaintext_features = torch.from_numpy(features)
+            cir_service.db_image_names = image_names
+            logger.info(f"[CIR] 实时构建完成: {len(image_names)} 张图像")
+            _cir_cache_initialized = True
+            _current_dataset = dataset
+            return
+        else:
+            logger.error(f"[CIR] 构建返回空结果")
+    except Exception as e:
+        logger.error(f"[CIR] 实时构建失败: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+    # 两种方式都失败，抛出错误
+    raise HTTPException(
+        status_code=503,
+        detail=f"数据集 {dataset} 初始化失败，请运行: python scripts/build_all_cache.py --type cir --dataset {dataset}"
+    )
 
 
 # ============= 请求/响应模型 =============
@@ -290,7 +384,7 @@ async def load_sknn_database(
         return {
             "status": "success",
             "database_size": service.get_index_size(),
-            "feature_shape": list(service.db_features.shape) if service.db_features else None
+            "feature_shape": list(service.db_plaintext_features.shape) if service.db_plaintext_features else None
         }
 
     except Exception as e:
@@ -332,36 +426,68 @@ async def sknn_search(
 @router.post("/sknn/search/upload")
 async def sknn_search_upload(
     image: UploadFile = File(..., description="查询图像"),
-    top_k: int = Query(default=10, ge=1, le=100)
+    dataset: str = Form(default="roxford5k", description="数据集名称 (roxford5k/rparis6k)"),
+    top_k: int = Form(default=10, ge=1, le=100)
 ) -> Dict[str, Any]:
     """
     SkNN 隐私保护图像检索（文件上传模式）。
 
     用户上传图像，服务器在加密数据库中搜索相似图像。
+
+    参数：
+        image: 查询图像文件
+        dataset: 数据集名称（roxford5k 或 rparis6k）
+        top_k: 返回结果数量
     """
+    # 确保缓存初始化
+    await ensure_cir_cache_initialized(dataset)
+
     service = get_cir_service()
+
+    # 验证当前加载的数据集是否正确
+    if _current_dataset != dataset:
+        raise HTTPException(
+            status_code=500,
+            detail=f"数据集加载错误：期望 {dataset}，实际 {_current_dataset}"
+        )
 
     if not service.is_indexed:
         raise HTTPException(status_code=400, detail="加密数据库未加载")
 
     try:
-        # 保存上传的图像到临时文件
+        # 使用 PIL 直接处理图像字节数据
         import tempfile
+        import os
+
         image_bytes = await image.read()
 
-        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-            tmp.write(image_bytes)
+        # 验证图像有效性并转换格式
+        pil_image = Image.open(io.BytesIO(image_bytes))
+        pil_image = pil_image.convert('RGB')
+
+        # 根据原始文件名确定扩展名，默认使用 .jpg
+        suffix = os.path.splitext(image.filename)[1] if image.filename else '.jpg'
+        if suffix.lower() not in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff']:
+            suffix = '.jpg'
+
+        # 保存到临时文件
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            pil_image.save(tmp, format='JPEG')
             tmp_path = tmp.name
 
         # 执行检索
         results = service.search(query_image_path=tmp_path, top_k=top_k)
 
+        # 为结果添加图像 URL
+        for r in results:
+            r.image_url = _generate_image_url(dataset, r.image_name)
+
         # 清理临时文件
-        import os
         os.unlink(tmp_path)
 
         return {
             "status": "success",
+            "dataset": dataset,
             "use_encrypted": True,
             "results": [r.__dict__ for r in results]
         }
@@ -374,37 +500,69 @@ async def sknn_search_upload(
 @router.post("/search/upload")
 async def cir_search_upload(
     image: UploadFile = File(..., description="查询图像"),
-    top_k: int = Query(default=10, ge=1, le=100)
+    dataset: str = Form(default="roxford5k", description="数据集名称 (roxford5k/rparis6k)"),
+    top_k: int = Form(default=10, ge=1, le=100)
 ) -> Dict[str, Any]:
     """
     明文 CNN 图像检索（文件上传模式）。
 
     不使用加密，直接计算特征相似度进行检索。
     适用于对隐私保护没有要求的场景。
+
+    参数：
+        image: 查询图像文件
+        dataset: 数据集名称（roxford5k 或 rparis6k）
+        top_k: 返回结果数量
     """
+    # 确保缓存初始化
+    await ensure_cir_cache_initialized(dataset)
+
     service = get_cir_service()
+
+    # 验证当前加载的数据集是否正确
+    if _current_dataset != dataset:
+        raise HTTPException(
+            status_code=500,
+            detail=f"数据集加载错误：期望 {dataset}，实际 {_current_dataset}"
+        )
 
     if not service.is_indexed:
         raise HTTPException(status_code=400, detail="数据库未加载，请先加载或构建数据库")
 
     try:
-        # 保存上传的图像到临时文件
+        # 使用 PIL 直接处理图像字节数据
         import tempfile
+        import os
+
         image_bytes = await image.read()
 
-        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-            tmp.write(image_bytes)
+        # 验证图像有效性并转换格式
+        pil_image = Image.open(io.BytesIO(image_bytes))
+        pil_image = pil_image.convert('RGB')
+
+        # 根据原始文件名确定扩展名，默认使用 .jpg
+        suffix = os.path.splitext(image.filename)[1] if image.filename else '.jpg'
+        if suffix.lower() not in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff']:
+            suffix = '.jpg'
+
+        # 保存到临时文件
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            pil_image.save(tmp, format='JPEG')
             tmp_path = tmp.name
 
         # 执行明文检索
         results = service.search(query_image_path=tmp_path, top_k=top_k)
 
+        # 为结果添加图像 URL
+        for r in results:
+            r.image_url = _generate_image_url(dataset, r.image_name)
+
         # 清理临时文件
-        import os
         os.unlink(tmp_path)
 
         return {
             "status": "success",
+            "dataset": dataset,
             "use_encrypted": False,
             "results": [r.__dict__ for r in results]
         }
@@ -452,7 +610,7 @@ async def get_database_info() -> Dict[str, Any]:
     return {
         "loaded": True,
         "database_size": status.get("index_size", 0),
-        "feature_shape": [2 * service.feature_dim, status.get("index_size", 0)] if service.db_features else None,
+        "feature_shape": [2 * service.feature_dim, status.get("index_size", 0)] if service.db_encrypted_features else None,
         "images": service.db_image_names[:20] if service.db_image_names else [],
         "total_images": len(service.db_image_names) if service.db_image_names else 0
     }

@@ -93,7 +93,13 @@
       "WebFetch(domain:modelscope.cn)",
       "Bash(pip show:*)",
       "Bash(du:*)",
-      "Bash(powershell -Command \"Get-Content 'C:\\\\Users\\\\24957\\\\.claude\\\\projects\\\\F--project-DeepHash-ASPE\\\\a34c4f30-241a-4588-abc5-51f0571ce041\\\\tool-results\\\\toolu_tool-8278f747cedc47caa6069537d28e0658.txt' -Tail 30\")"
+      "Bash(powershell -Command \"Get-Content 'C:\\\\Users\\\\24957\\\\.claude\\\\projects\\\\F--project-DeepHash-ASPE\\\\a34c4f30-241a-4588-abc5-51f0571ce041\\\\tool-results\\\\toolu_tool-8278f747cedc47caa6069537d28e0658.txt' -Tail 30\")",
+      "Bash(netstat:*)",
+      "Bash(cmd //c \"taskkill /F /PID 32492\")",
+      "Bash(cmd //c \"taskkill /F /PID 35592\")",
+      "Bash(cmd //c \"taskkill /F /PID 28472\")",
+      "Bash(cat:*)",
+      "WebFetch(domain:zhuanlan.zhihu.com)"
     ]
   },
   "skipWebFetchPreflight": true

@@ -2,6 +2,7 @@
 图像 API 路由
 
 处理图像上传、特征提取和哈希码生成。
+支持从原始 JPG 文件或 .mat 文件加载图像。
 """
 
 from fastapi import APIRouter, UploadFile, File, HTTPException
@@ -12,10 +13,11 @@ import numpy as np
 from PIL import Image
 import io
 import base64
+from pathlib import Path
 
 from app.schemas.search import ImageUploadResponse, ImageFeatureResponse
 from app.services.dcmh_service import get_dcmh_service
-from app.services.dataset_service import get_dataset_service
+from app.services.dataset_service import get_dataset_service, DATASET_CONFIGS
 
 router = APIRouter(prefix="/api/images", tags=["images"])
 
@@ -120,16 +122,21 @@ async def extract_image_feature(
 
 
 @router.get("/{image_id}")
-async def get_image(image_id: int, format: str = "json"):
+async def get_image(
+    image_id: int,
+    format: str = "json",
+    dataset: str = "flickr25k"
+):
     """
     获取单个图像。
 
     参数：
-        image_id: 图像索引
+        image_id: 图像索引（从 0 开始，对应 im{image_id+1}.jpg）
         format: 返回格式，'json' 返回元信息，'image' 返回图像数据
+        dataset: 数据集名称
     """
     try:
-        dataset_service = get_dataset_service()
+        dataset_service = get_dataset_service(dataset_name=dataset)
         dataset_service.load_data()
 
         # 获取数据划分
@@ -150,56 +157,114 @@ async def get_image(image_id: int, format: str = "json"):
         labels = np.where(tags[0] > 0)[0].tolist() if tags is not None else []
 
         if format == "image":
-            # 返回实际图像数据
-            import h5py
-            h5_file = h5py.File(dataset_service.data_path, 'r')
-            try:
-                # 图像数据存储在 h5 文件中
-                images = h5_file['images']
-                if image_id >= len(images):
-                    raise HTTPException(status_code=404, detail="Image index out of range")
-
-                # 获取图像数据
-                # h5 中的图像是 int8 数组 [3, H, W]，范围约 [-42, 127]
-                img_data = images[image_id]
-
-                # CHW -> HWC
-                img_data = np.transpose(img_data, (1, 2, 0))
-
-                # 转换为 uint8
-                # 原始数据范围约 [-42, 127]，需要映射到 [0, 255]
-                img_data = img_data.astype(np.float32)
-                img_data = (img_data - img_data.min()) / (img_data.max() - img_data.min() + 1e-8) * 255
-                img_data = img_data.astype(np.uint8)
-
-                # 创建 PIL 图像
-                pil_image = Image.fromarray(img_data)
-
-                # 转换为 PNG
-                img_buffer = io.BytesIO()
-                pil_image.save(img_buffer, format='PNG')
-                img_buffer.seek(0)
-
-                return Response(
-                    content=img_buffer.getvalue(),
-                    media_type="image/png"
-                )
-            finally:
-                h5_file.close()
+            # 检查数据集类型
+            config = DATASET_CONFIGS.get(dataset, {})
+            if config.get('type') == 'raw':
+                # 从原始 JPG 文件加载
+                return _load_raw_image(image_id, dataset_service)
+            else:
+                # 从 .mat 文件加载
+                return _load_mat_image(image_id, dataset_service)
 
         # 默认返回 JSON 元信息
+        config = DATASET_CONFIGS.get(dataset, {})
+        if config.get('type') == 'raw':
+            thumbnail_url = f"/flickr-images/im{image_id + 1}.jpg"
+        else:
+            thumbnail_url = f"/api/images/{image_id}?format=image&dataset={dataset}"
+
         return {
             "success": True,
             "image_id": image_id,
-            "labels": labels[:20],  # 返回前20个标签
+            "labels": labels[:20],
             "total_labels": len(labels),
-            "thumbnail_url": f"/api/images/{image_id}?format=image"
+            "thumbnail_url": thumbnail_url
         }
 
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _load_raw_image(image_id: int, dataset_service) -> Response:
+    """
+    从原始 JPG 文件加载图像。
+
+    参数：
+        image_id: 图像索引（从 0 开始）
+        dataset_service: 数据集服务实例
+
+    返回：
+        FastAPI Response 对象
+    """
+    # 获取图像路径
+    img_path = dataset_service.get_image_path(image_id)
+
+    if not img_path.exists():
+        raise HTTPException(status_code=404, detail=f"Image file not found: {img_path}")
+
+    # 直接读取并返回图像
+    with open(img_path, 'rb') as f:
+        img_data = f.read()
+
+    # 检测图像格式
+    img = Image.open(io.BytesIO(img_data))
+    format_map = {
+        'JPEG': 'image/jpeg',
+        'PNG': 'image/png',
+        'GIF': 'image/gif',
+        'BMP': 'image/bmp'
+    }
+    media_type = format_map.get(img.format, 'image/jpeg')
+
+    return Response(content=img_data, media_type=media_type)
+
+
+def _load_mat_image(image_id: int, dataset_service) -> Response:
+    """
+    从 .mat 文件加载图像。
+
+    参数：
+        image_id: 图像索引（从 0 开始）
+        dataset_service: 数据集服务实例
+
+    返回：
+        FastAPI Response 对象
+    """
+    import h5py
+
+    h5_file = h5py.File(dataset_service.data_path, 'r')
+    try:
+        images = h5_file['images']
+        if image_id >= len(images):
+            raise HTTPException(status_code=404, detail="Image index out of range")
+
+        # 获取图像数据
+        img_data = images[image_id]
+
+        # CHW -> HWC
+        img_data = np.transpose(img_data, (1, 2, 0))
+
+        # 转换为 uint8
+        img_data = img_data.astype(np.float32)
+        img_data = (img_data - img_data.min()) / (img_data.max() - img_data.min() + 1e-8) * 255
+        img_data = img_data.astype(np.uint8)
+
+        # 创建 PIL 图像
+        pil_image = Image.fromarray(img_data)
+
+        # 转换为 PNG
+        img_buffer = io.BytesIO()
+        pil_image.save(img_buffer, format='PNG')
+        img_buffer.seek(0)
+
+        return Response(
+            content=img_buffer.getvalue(),
+            media_type="image/png"
+        )
+    finally:
+        h5_file.close()
 
 
 @router.post("/batch-hash")

@@ -6,6 +6,9 @@ ASPE 服务：非对称标量积保持加密
 - 查询陷阱门生成
 - 密文汉明距离计算
 - 密文 mAP 评估
+- 密钥持久化支持
+
+使用 Scheme 2（双矩阵增强方案）提供更高安全级别。
 """
 
 import numpy as np
@@ -13,49 +16,98 @@ import torch
 from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
 import sys
-import json
+import logging
 
 # 添加项目根目录到路径
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from core.aspe.dcmh_wrapper import ASPEForDCMH
-from core.aspe.scheme1 import ASPEScheme1
+from core.aspe.dcmh_wrapper_v2 import ASPEForDCMHv2
+from core.aspe.scheme2 import ASPEScheme2
+from backend.app.services.key_manager import get_key_manager
+
+logger = logging.getLogger(__name__)
 
 
 class ASPEService:
     """
     ASPE 加密服务。
 
-    提供：
-    - 初始化 ASPE 密钥
+    使用 Scheme 2（双矩阵增强方案）提供：
+    - 初始化 ASPE 密钥（支持持久化）
     - 加密检索库哈希码
     - 生成查询陷阱门
     - 计算密文汉明距离
     - 计算密文 mAP
+
+    安全特性：
+    - 安全级别：3（抵抗已知明文攻击）
+    - 双矩阵：M1, M2
+    - 拆分向量：S
     """
 
     def __init__(self,
                  bit_dim: int = 64,
+                 d_prime: Optional[int] = None,
                  seed: int = 42,
-                 key_path: Optional[str] = None):
+                 key_path: Optional[str] = None,
+                 auto_load_keys: bool = True):
         """
         初始化 ASPE 服务。
 
         参数：
             bit_dim: 哈希码位数（必须与 DCMH 一致）
+            d_prime: 扩展维度（默认：max(bit_dim+1, 80)）
             seed: ASPE 密钥生成的随机种子
-            key_path: 可选的密钥保存/加载路径
+            key_path: 可选的密钥保存/加载路径（已弃用，使用 KeyManager）
+            auto_load_keys: 是否自动加载持久化密钥
         """
         self.bit_dim = bit_dim
+        self.d_prime = d_prime
         self.seed = seed
 
-        # 初始化 ASPE 包装器
-        self.aspe_wrapper = ASPEForDCMH(bit_dim=bit_dim, seed=seed)
+        # 初始化 ASPE 包装器 V2 (Scheme 2)
+        self.aspe_wrapper = ASPEForDCMHv2(bit_dim=bit_dim, d_prime=d_prime, seed=seed)
 
         # 加密检索库缓存
         self.encrypted_database: Optional[np.ndarray] = None
         self.database_labels: Optional[np.ndarray] = None
         self.database_codes: Optional[np.ndarray] = None
+
+        # 自动加载持久化密钥
+        if auto_load_keys:
+            self._load_persistent_keys()
+
+    def _load_persistent_keys(self):
+        """从 KeyManager 加载持久化密钥。"""
+        try:
+            key_manager = get_key_manager()
+            keys = key_manager.get_dcmh_v2_keys(
+                bit_dim=self.bit_dim,
+                d_prime=self.d_prime,
+                seed=self.seed
+            )
+
+            # 应用密钥到 ASPE 包装器
+            # Scheme 2 使用 M1, M2, S, w 矩阵
+            if keys:
+                if 'M1' in keys:
+                    self.aspe_wrapper.aspe.M1 = keys['M1']
+                if 'M2' in keys:
+                    self.aspe_wrapper.aspe.M2 = keys['M2']
+                if 'S' in keys:
+                    self.aspe_wrapper.aspe.S = keys['S']
+                if 'w' in keys:
+                    self.aspe_wrapper.aspe.w = keys['w']
+                if 'M1_inv' in keys and keys['M1_inv'] is not None:
+                    self.aspe_wrapper.aspe.M1_inv = keys['M1_inv']
+                if 'M2_inv' in keys and keys['M2_inv'] is not None:
+                    self.aspe_wrapper.aspe.M2_inv = keys['M2_inv']
+                if 'd_prime' in keys:
+                    self.aspe_wrapper.actual_d_prime = keys['d_prime']
+                    self.aspe_wrapper.aspe.d_prime = keys['d_prime']
+                logger.info(f"[ASPEService] 已加载 Scheme 2 持久化密钥")
+        except Exception as e:
+            logger.warning(f"[ASPEService] 加载持久化密钥失败：{e}，将使用临时密钥")
 
     def encrypt_database(self,
                         hash_codes: np.ndarray,
@@ -261,7 +313,11 @@ class ASPEService:
         """获取服务状态。"""
         return {
             "bit_dim": self.bit_dim,
+            "d_prime": self.aspe_wrapper.actual_d_prime,
+            "ciphertext_dim": 2 * self.aspe_wrapper.actual_d_prime,
             "seed": self.seed,
+            "scheme": "Scheme 2 (双矩阵增强方案)",
+            "security_level": 3,
             "database_encrypted": self.encrypted_database is not None,
             "database_size": self.encrypted_database.shape[0] if self.encrypted_database is not None else 0,
             "database_labels_set": self.database_labels is not None

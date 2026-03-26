@@ -78,6 +78,10 @@ frontend/.next/
 # Backend cache
 backend/cache/
 
+# Backend keys (密钥文件不提交到代码库)
+backend/keys/*.pth
+!backend/keys/.gitkeep
+
 # Large result data (keep reports and charts)
 results/flickr-25k/*.zip
 results/flickr-25k/*/*.pth

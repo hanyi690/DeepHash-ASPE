@@ -61,7 +61,7 @@ def train(**kwargs):
        - 文本训练：随机采样 batch，计算 cur_g，更新 G_buffer
        - 更新 B = sign(F_buffer + G_buffer)
        - 计算总损失
-    5. 学习率线性衰减
+    5. 学习率对数衰减（与 MATLAB 一致：logspace(-1.5, -3)）
     """
     opt = TrainConfig()
     opt.parse(kwargs)

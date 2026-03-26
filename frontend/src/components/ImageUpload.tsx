@@ -6,9 +6,10 @@ import { useDropzone } from 'react-dropzone';
 interface ImageUploadProps {
   onImageSelected: (file: File) => void;
   onImageUploaded: (imageUrl: string) => void;
+  onImageCleared?: () => void;
 }
 
-export default function ImageUpload({ onImageSelected, onImageUploaded }: ImageUploadProps) {
+export default function ImageUpload({ onImageSelected, onImageUploaded, onImageCleared }: ImageUploadProps) {
   const [preview, setPreview] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
 
@@ -35,7 +36,9 @@ export default function ImageUpload({ onImageSelected, onImageUploaded }: ImageU
 
       if (response.ok) {
         const data = await response.json();
-        onImageUploaded(data.image_url || previewUrl);
+        // 优先使用本地预览 URL（包含实际图像数据），而不是服务器端点 URL
+        // 服务器端点返回的 image_id 是临时生成的，无法用于获取图像
+        onImageUploaded(previewUrl);
       }
     } catch (error) {
       console.error('上传失败:', error);
@@ -43,6 +46,14 @@ export default function ImageUpload({ onImageSelected, onImageUploaded }: ImageU
       setUploading(false);
     }
   }, [onImageSelected, onImageUploaded]);
+
+  const handleClear = useCallback(() => {
+    if (preview) {
+      URL.revokeObjectURL(preview);
+    }
+    setPreview(null);
+    onImageCleared?.();
+  }, [preview, onImageCleared]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -52,6 +63,46 @@ export default function ImageUpload({ onImageSelected, onImageUploaded }: ImageU
     maxFiles: 1,
   });
 
+  // 有预览图片时只显示预览和取消按钮
+  if (preview) {
+    return (
+      <div className="w-full">
+        <div className="relative inline-block group">
+          <img
+            src={preview}
+            alt="预览"
+            className="max-h-64 rounded-xl shadow-lg transform group-hover:scale-[1.02] transition-transform duration-300"
+          />
+          {uploading && (
+            <div className="absolute inset-0 bg-black/60 rounded-xl flex items-center justify-center backdrop-blur-sm">
+              <div className="flex flex-col items-center">
+                <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin mb-2" />
+                <span className="text-white font-medium">上传中...</span>
+              </div>
+            </div>
+          )}
+          {/* 取消按钮 */}
+          {!uploading && (
+            <button
+              onClick={handleClear}
+              className="absolute -top-2 -right-2 w-8 h-8 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center shadow-lg transition-all duration-200 hover:scale-110"
+              title="取消上传"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
+          {/* 悬停覆盖层 */}
+          {!uploading && (
+            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 rounded-xl transition-all duration-200 pointer-events-none" />
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // 没有图片时显示上传区域
   return (
     <div className="w-full">
       <div
@@ -97,31 +148,6 @@ export default function ImageUpload({ onImageSelected, onImageUploaded }: ImageU
           <div className="absolute inset-0 border-4 border-[#6366F1]/20 rounded-xl pointer-events-none" />
         )}
       </div>
-
-      {/* 预览 */}
-      {preview && (
-        <div className="mt-6">
-          <div className="relative inline-block group">
-            <img
-              src={preview}
-              alt="预览"
-              className="max-h-64 rounded-xl shadow-lg transform group-hover:scale-[1.02] transition-transform duration-300"
-            />
-            {uploading && (
-              <div className="absolute inset-0 bg-black/60 rounded-xl flex items-center justify-center backdrop-blur-sm">
-                <div className="flex flex-col items-center">
-                  <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin mb-2" />
-                  <span className="text-white font-medium">上传中...</span>
-                </div>
-              </div>
-            )}
-            {/* 悬停覆盖层 */}
-            {!uploading && (
-              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 rounded-xl transition-all duration-200 pointer-events-none" />
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

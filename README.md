@@ -8,6 +8,7 @@
 - **图像检索**：相似图像搜索（CNN 特征 + SkNN 隐私保护）
 - **隐私保护**：使用 ASPE 加密实现加密数据库检索
 - **全检索模式**：文本→图像、图像→文本、图像→图像
+- **结果可视化**：统一使用 ResultsGrid 组件显示检索结果（含图像缩略图）
 - **Web 演示系统**：Next.js 14 前端 + FastAPI 后端
 
 ## 系统架构
@@ -15,13 +16,14 @@
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    Next.js 14 前端                           │
-│  页面：/ (首页) | /demo | /search | /cir | /dataset | /encrypt | /metrics │
+│  页面：/ (首页) | /search (统一检索)                         │
 └─────────────────────────────────────────────────────────────┘
                               ↓ HTTP/REST API
 ┌─────────────────────────────────────────────────────────────┐
 │                     FastAPI 后端                              │
 │  API: /api/images | /api/texts | /api/hash | /api/encrypt  │
 │       /api/search | /api/cir | /api/metrics                 │
+│       /cir-images (静态文件服务)                             │
 └─────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -48,8 +50,9 @@ DeepHash-ASPE/
 │   │   ├── scheme1.py      # 基础 2 级安全方案
 │   │   ├── scheme2.py      # 增强 3 级安全方案
 │   │   ├── keygen.py       # 密钥生成
-│   │   ├── dcmh_wrapper.py # DCMH 哈希加密包装器
-│   │   └── cnn_wrapper.py  # CNN 特征加密包装器
+│   │   ├── dcmh_wrapper.py # DCMH 哈希加密包装器 (Scheme 1)
+│   │   ├── dcmh_wrapper_v2.py # DCMH 哈希加密包装器 (Scheme 2)
+│   │   └── cnn_wrapper.py  # CNN 特征加密包装器 (SkNN)
 │   │
 │   ├── hashing/            # 深度哈希模型
 │   │   ├── dcmh_image.py   # DCMH 图像编码器
@@ -78,8 +81,10 @@ DeepHash-ASPE/
 │   ├── deploy_model.py     # 模型部署脚本
 │   ├── download_cir_model.py  # CIR 模型下载
 │   ├── download_cir_dataset.py # CIR 数据集下载
-│   ├── build_cir_db.py     # 构建检索数据库
-│   └── rebuild_hash_cache.py  # 重建哈希缓存
+│   ├── infer_tag_mapping.py   # 推断 YAll 列映射
+│   ├── build_all_cache.py     # 构建所有缓存
+│   ├── verify_tag_mapping.py  # 验证标签映射
+│   └── clean_flickr25k_dataset.py # 清理 Flickr25k 数据集
 │
 ├── backend/                # FastAPI 后端
 │   └── app/
@@ -88,14 +93,16 @@ DeepHash-ASPE/
 │       └── services/       # 业务服务
 │
 ├── frontend/               # Next.js 14 前端
-│   └── src/app/
-│       ├── page.tsx        # 首页
-│       ├── demo/           # 演示页面
-│       ├── search/         # 统一检索页面
-│       ├── cir/            # CNN 检索页面
-│       ├── dataset/        # 数据集浏览
-│       ├── encrypt/        # 加密可视化
-│       └── metrics/        # 指标展示
+│   └── src/
+│       ├── app/
+│       │   ├── page.tsx        # 首页
+│       │   └── search/         # 统一检索页面
+│       │       └── page.tsx    # 标签搜图/图搜标签/图搜图
+│       └── components/         # 共享组件
+│           ├── ImageUpload.tsx # 图像上传组件
+│           ├── ResultsGrid.tsx # 结果网格（显示图片）
+│           ├── DatasetSelector.tsx # 数据集选择器
+│           └── LabelSelector.tsx   # 标签选择器
 │
 ├── tests/                  # 单元测试
 ├── results/                # 训练结果和评估报告
@@ -145,6 +152,32 @@ npm install
 ```
 
 ## 快速开始
+
+### 数据一致性说明
+
+Flickr25K 数据集的训练数据 `FLICKR-25K.mat` 和原始标签文件 `common_tags.txt` 存在**列顺序不一致**的问题：
+
+- `FLICKR-25K.mat` 中的 `YAll` 矩阵列顺序与 `common_tags.txt` 行顺序不对应
+- 原因：数据来源不同，DCMH 旧版数据的标签顺序已被打乱
+
+系统通过**频率匹配**推断列映射：
+
+```bash
+# 推断 YAll 列索引 -> tag 名称的映射
+python scripts/infer_tag_mapping.py
+
+# 输出: data/dcmh/flickr25k/tag_mapping.npy
+```
+
+**映射原理**：
+1. 统计 YAll 每列的 1 的数量
+2. 读取 common_tags.txt 中每个 tag 的频率
+3. 使用匈牙利算法匹配，最小化差异
+4. 验证：高频 tag（explore、sky、nikon 等）映射差异 < 35
+
+**映射文件**：
+- `tag_mapping.npy`：YAll 列索引 -> tag 名称的列表
+- `tag_mapping.txt`：文本版本，便于查看
 
 ### 训练 DCMH 模型
 
@@ -218,6 +251,18 @@ npm run dev
 # 访问：http://localhost:3000
 ```
 
+### 构建 CIR 缓存（可选）
+
+CIR 服务支持懒加载模式，首次请求时自动加载数据。如需预先构建缓存：
+
+```bash
+# 构建 CIR 缓存（自动使用配置文件中的正确路径）
+python scripts/build_all_cache.py --type cir --dataset roxford5k
+
+# 构建所有缓存
+python scripts/build_all_cache.py --type all
+```
+
 ## 使用示例
 
 ### Python API
@@ -226,7 +271,7 @@ npm run dev
 
 ```python
 from core.hashing.dcmh_model import DCMHModel
-from core.aspe.dcmh_wrapper import ASPEForDCMH
+from core.aspe.dcmh_wrapper_v2 import ASPEForDCMHv2
 
 # 创建 DCMH 模型
 model = DCMHModel(bit=64, y_dim=24)  # Flickr25K 有 24 个类别
@@ -235,15 +280,15 @@ model = DCMHModel(bit=64, y_dim=24)  # Flickr25K 有 24 个类别
 img_hash = model.encode_image(image)
 txt_hash = model.encode_text(text_labels)
 
-# ASPE 加密
-aspe = ASPEForDCMH(bit_dim=64)
-aspe.generate_keys()
+# ASPE Scheme 2 加密 (默认，安全级别 3)
+aspe = ASPEForDCMHv2(bit_dim=64)
+# 密钥自动生成: M1, M2, S 矩阵
 
 encrypted_db = aspe.GenEnc(database_hashes)      # 加密数据库
 trapdoor = aspe.GenTrap(query_hash)              # 生成陷阱门
 
-# 密文检索（mAP 与明文相等）
-scores, indices = aspe.search(encrypted_db, query_hash, top_k=10)
+# 密文检索（mAP 与明文近似相等，误差 < 1e-3）
+hamming_dist = aspe.ciphertext_hamming_distance(trapdoor, encrypted_db)
 ```
 
 #### CNN + SkNN 图像检索
@@ -299,13 +344,54 @@ results = cir_eval.evaluate()  # 默认启用 ASPE 验证
 | 查询集 | 2,000  |
 | 训练集 | 10,000 |
 | 数据库 | 18,015 |
-| 类别数 | 24     |
+| 标签数 | 1,386  |
+
+**数据格式**：
+
+系统现在从原始 JPG 图像和标签文件加载数据，确保检索结果与图像内容对应：
+
+```
+data/dcmh/flickr25k/
+├── mirflickr/           # 图像目录
+│   └── im1.jpg ~ im25000.jpg
+├── doc/
+│   └── common_tags.txt  # 标签名列表（1386 个）
+└── tag_mapping.npy      # 标签索引映射（common_tags -> YAll）
+```
 
 **下载方式**：
 
 - 百度网盘：https://pan.baidu.com/s/1X5BTyux524aUyqHpFGPPlA
 - 提取码：`eico`
-- 目标路径：`data/flickr25k/FLICKR-25K.mat`
+- 下载后解压到 `data/dcmh/flickr25k/` 目录
+
+### Flickr25K Cleaned（清理后的数据集）
+
+原始 Flickr25k 数据集中很多图片的标签不在 `common_tags.txt` 中。系统提供了清理脚本，生成过滤后的数据集：
+
+| 指标             | 数值     |
+| ---------------- | -------- |
+| 原始图片数       | 25,000   |
+| 有效图片数       | 20,359   |
+| 无效图片数       | 4,641    |
+| 过滤前总标签数   | 223,537  |
+| 过滤后总标签数   | 94,282   |
+
+**目录结构**：
+
+```
+data/dcmh/flickr25k_cleaned/
+├── images/              # 图片文件（复制，保留原名 im1.jpg 等）
+├── tags/                # 清理后的标签文件（只含 common_tags）
+├── index_mapping.json   # 有效图片的原始 idx 列表
+└── metadata.json        # 数据集统计信息
+```
+
+**运行清理脚本**：
+
+```bash
+python scripts/clean_flickr25k_dataset.py
+```
 
 ### ROxford5k / RParis6k（用于 CIR 评估）
 
@@ -344,6 +430,46 @@ python scripts/download_cir_dataset.py --all
    - Oxford5k 图像: https://www.robots.ox.ac.uk/~vgg/data/oxbuildings/oxbuild_images-v1.tgz
    - Paris6k 图像: https://www.robots.ox.ac.uk/~vgg/data/parisbuildings/
    - Ground Truth: http://cmp.felk.cvut.cz/cnnimageretrieval/data/test/
+
+## 预训练模型
+
+## 缓存结构
+
+系统使用预计算缓存加速检索，缓存存储在 `backend/cache/` 目录：
+
+```
+backend/cache/
+├── dcmh/                      # DCMH 缓存
+│   └── flickr25k/
+│       ├── labels.npz         # 标签（190MB，只存一次）
+│       ├── database_image.npz # 图像哈希码（4.4MB）
+│       ├── database_text.npz  # 文本哈希码（4.4MB）
+│       ├── encrypted.npz      # 加密数据库（9MB）
+│       └── query.npz          # 查询数据（11MB）
+│
+└── cir/                       # CIR 缓存
+    ├── roxford5k/
+    │   ├── features.npz       # 明文特征
+    │   ├── encrypted.npz      # 加密特征
+    │   └── image_names.npz
+    └── rparis6k/
+        └── ...
+```
+
+**优化说明**：labels 数据单独存储，避免在 image/text 缓存中重复，节省约 385MB 空间。
+
+**缓存构建**：
+
+```bash
+# 构建所有缓存
+python scripts/build_all_cache.py --type all
+
+# 仅构建 DCMH 缓存
+python scripts/build_all_cache.py --type dcmh --dataset flickr25k
+
+# 强制重建
+python scripts/build_all_cache.py --type dcmh --force
+```
 
 ## 预训练模型
 
@@ -415,21 +541,62 @@ data/
 | **图搜标签** (I2T) | 上传图像，预测相关标签     | DCMH 跨模态检索          |
 | **图搜图** (CIR)   | 上传图像，检索相似图像     | CNN 特征 + SkNN 隐私保护 |
 
+### 检索流程
+
+#### 标签搜图 (T2I)
+
+1. 前端发送 YAll 列索引（0-1385）
+2. 后端构建 1386 维 multi-hot 向量（对应位置设为 1）
+3. 使用 DCMH 文本编码器生成哈希码
+4. 在图像哈希码数据库中计算汉明距离
+5. 返回 Top-K 相似图像
+
+#### 图搜标签 (I2T)
+
+1. 前端上传图像（base64 编码）
+2. 后端预处理图像（224x224，RGB）
+3. 使用 DCMH 图像编码器生成哈希码
+4. 在文本哈希码数据库中计算汉明距离
+5. 返回 Top-K 相似图像的标签
+
+**注意**：两种模式使用不同的数据库：
+- 标签搜图：使用图像哈希码数据库
+- 图搜标签：使用文本哈希码数据库
+
 ## ASPE 加密原理
 
-ASPE (Asymmetric Scalar-product-preserving Encryption) 是一种非对称标量积保持加密方案：
+系统支持两种 ASPE 加密方案：
+
+### Scheme 1 (基础方案)
+
+- **安全级别**: 2 (抵抗已知样本攻击)
+- **密钥**: 单矩阵 M
+- **维度扩展**: d → d+1
+- **适用场景**: 对安全性要求不高的场景
+
+### Scheme 2 (增强方案，当前默认使用)
+
+- **安全级别**: 3 (抵抗已知明文攻击)
+- **密钥**: 双矩阵 M1, M2 + 拆分向量 S
+- **维度扩展**: d → 2×d' (d' = max(d+1, 80))
+- **拆分策略**: SkNN 风格互补拆分
+  - 建库端: S=0 复制, S=1 随机拆分
+  - 查询端: S=0 固定拆分(r=0), S=1 复制
+- **适用场景**: 高安全性要求的跨模态检索
+
+**加密原理**:
 
 ```
-建库端：S=0 时复制，S=1 时随机拆分
-查询端：S=0 时拆分 (r=0)，S=1 时复制
-密文内积 = 明文内积（保持性）
+建库端：S=0 复制，S=1 随机拆分 → p_a, p_b
+查询端：S=0 拆分 (r=0)，S=1 复制 → q_a, q_b
+密文内积 = p_a·q_a + p_b·q_b = 明文内积（保持性）
 ```
 
 **安全属性**：
 
 - 距离不可恢复
 - 陷阱门不可链接
-- 密文 mAP = 明文 mAP
+- 密文 mAP ≈ 明文 mAP (误差 < 1e-3)
 
 ## API 端点
 
@@ -451,12 +618,15 @@ ASPE (Asymmetric Scalar-product-preserving Encryption) 是一种非对称标量�
 | mAP(t→i) | ~0.54             |
 | 训练时间  | ~30min (RTX 4060) |
 
-### ASPE 验证结果
+### ASPE 验证结果 (Scheme 2)
 
-| 指标      | 明文 mAP | 密文 mAP | 误差    |
-| --------- | -------- | -------- | ------- |
-| mAP(i→t) | 0.5392   | 0.5392   | < 0.001 |
-| mAP(t→i) | 0.5395   | 0.5394   | < 0.001 |
+| 指标      | 明文 mAP | 密文 mAP | 误差      |
+| --------- | -------- | -------- | --------- |
+| mAP(i→t) | 0.7210   | 0.7199   | 1.09e-03  |
+| mAP(t→i) | 0.7575   | 0.7565   | 9.39e-04  |
+
+**密文维度**: 160 (原 64 → 扩展 d'=80 → 拼接为 2×80)
+**安全级别**: 3 (抵抗已知明文攻击)
 
 ## 配置
 

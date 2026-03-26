@@ -37,25 +37,18 @@ export default function Home() {
         </p>
 
         {/* CTA 按钮 */}
-        <div className="flex flex-col sm:flex-row justify-center gap-4">
-          <Link href="/demo">
-            <button className="btn-primary px-8 py-3.5 text-lg shadow-lg shadow-[#6366F1]/25 hover:shadow-[#6366F1]/40 hover:-translate-y-0.5 transition-all duration-200">
-              <svg className="w-5 h-5 mr-2 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              开始演示
-            </button>
-          </Link>
-          <Link href="/dataset">
-            <button className="btn-secondary px-8 py-3.5 text-lg">
-              <svg className="w-5 h-5 mr-2 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
-              </svg>
-              浏览数据集
-            </button>
-          </Link>
-        </div>
+        <Link href="/search">
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            className="btn-primary px-10 py-4 text-lg shadow-lg shadow-[#6366F1]/25 hover:shadow-[#6366F1]/40 hover:-translate-y-0.5 transition-all duration-200"
+          >
+            <svg className="w-5 h-5 mr-2 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            开始检索
+          </motion.button>
+        </Link>
       </motion.div>
 
       {/* Features */}
@@ -64,7 +57,7 @@ export default function Home() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
-          className="card card-clickable"
+          className="card"
         >
           <div className="w-12 h-12 bg-[#6366F1]/10 rounded-xl flex items-center justify-center mb-4">
             <svg className="w-6 h-6 text-[#6366F1]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -81,7 +74,7 @@ export default function Home() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
-          className="card card-clickable"
+          className="card"
         >
           <div className="w-12 h-12 bg-emerald-500/10 rounded-xl flex items-center justify-center mb-4">
             <svg className="w-6 h-6 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -90,7 +83,7 @@ export default function Home() {
           </div>
           <h3 className="text-lg font-semibold text-gray-900 mb-2">跨模态检索</h3>
           <p className="text-gray-600 leading-relaxed">
-            支持文本→图像和图像→文本的跨模态检索，64 位哈希码高效匹配
+            支持标签搜图和图搜标签的双向跨模态检索，64 位哈希码高效匹配
           </p>
         </motion.div>
 
@@ -98,57 +91,69 @@ export default function Home() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3 }}
-          className="card card-clickable"
+          className="card"
         >
           <div className="w-12 h-12 bg-purple-500/10 rounded-xl flex items-center justify-center mb-4">
             <svg className="w-6 h-6 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
             </svg>
           </div>
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">性能对比</h3>
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">图搜图</h3>
           <p className="text-gray-600 leading-relaxed">
-            实时展示明文与密文检索的 mAP 指标对比，差异远小于 0.001
+            基于 CNN 特征的图像检索，支持 SkNN 隐私保护检索模式
           </p>
         </motion.div>
       </div>
 
-      {/* Quick Links */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 py-8">
-        <Link href="/encrypt">
-          <div className="card card-clickable group">
-            <div className="flex items-start space-x-4">
-              <div className="w-12 h-12 bg-amber-500/10 rounded-xl flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform duration-200">
-                <svg className="w-6 h-6 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                </svg>
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-1">加密过程可视化</h3>
-                <p className="text-gray-600">
-                  了解 ASPE 如何加密哈希码并保持检索能力，逐步演示加密流程
-                </p>
-              </div>
-            </div>
+      {/* 技术特点 */}
+      <div className="py-12">
+        <h2 className="text-2xl font-bold text-gray-900 mb-8 text-center">技术特点</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="card">
+            <h3 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <svg className="w-5 h-5 text-[#6366F1]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              DCMH 深度跨模态哈希
+            </h3>
+            <ul className="text-gray-600 space-y-2">
+              <li className="flex items-start gap-2">
+                <span className="text-[#6366F1] mt-1">•</span>
+                端到端学习图像和文本的统一哈希表示
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-[#6366F1] mt-1">•</span>
+                支持 Flickr25K 和 NUS-WIDE 数据集
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-[#6366F1] mt-1">•</span>
+                64 位紧凑哈希码实现高效检索
+              </li>
+            </ul>
           </div>
-        </Link>
-
-        <Link href="/metrics">
-          <div className="card card-clickable group">
-            <div className="flex items-start space-x-4">
-              <div className="w-12 h-12 bg-indigo-500/10 rounded-xl flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform duration-200">
-                <svg className="w-6 h-6 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
-                </svg>
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-1">mAP 性能指标</h3>
-                <p className="text-gray-600">
-                  查看系统检索性能评估和对比分析，验证加密方案的正确性
-                </p>
-              </div>
-            </div>
+          <div className="card">
+            <h3 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <svg className="w-5 h-5 text-[#6366F1]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              ASPE 加密方案
+            </h3>
+            <ul className="text-gray-600 space-y-2">
+              <li className="flex items-start gap-2">
+                <span className="text-[#6366F1] mt-1">•</span>
+                非对称标量积保持加密保护数据隐私
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-[#6366F1] mt-1">•</span>
+                加密前后检索精度损失远小于 0.001
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-[#6366F1] mt-1">•</span>
+                抵抗已知样本攻击
+              </li>
+            </ul>
           </div>
-        </Link>
+        </div>
       </div>
     </div>
   );

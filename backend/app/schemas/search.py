@@ -93,16 +93,23 @@ class TrapdoorResponse(BaseModel):
     message: str
 
 
+# ============== 数据集相关常量 ==============
+
+DCMH_DATASETS = ['flickr25k', 'nuswide']
+CIR_DATASETS = ['roxford5k', 'rparis6k']
+
+
 # ============== 搜索相关模式 ==============
 
 class SearchRequest(BaseModel):
     """搜索请求。"""
     query_type: str = Field(
         default="label_to_image",
-        description="查询类型：label_to_image | image_to_label | image_to_image"
+        description="查询类型：label_to_image | image_to_label"
     )
     label_indices: List[int] = Field(default=[], description="用户选择的标签索引")
     query_image: Optional[str] = None
+    dataset: str = Field(default="flickr25k", description="数据集名称：flickr25k | nuswide")
     top_k: int = Field(default=10, ge=1, le=100)
     use_encrypted: bool = Field(default=True, description="是否使用加密检索")
 
@@ -113,7 +120,10 @@ class SearchResult(BaseModel):
     image_id: int
     score: float
     distance: float
-    labels: List[int] = []  # 该图像的标签索引列表
+    labels: List[int] = []  # 该图像的标签索引列表 (YAll 索引)
+    label_names: List[str] = []  # 该图像的标签名称列表
+    hit_labels: List[int] = []  # 命中的查询标签索引 (YAll 索引)
+    hit_label_names: List[str] = []  # 命中的查询标签名称
     thumbnail_url: Optional[str] = None
     hash_code: Optional[List[int]] = None  # 哈希码展示
 
@@ -122,7 +132,8 @@ class ImageToLabelResult(BaseModel):
     """图像→标签检索结果。"""
     rank: int
     image_id: int  # 来源图像ID
-    labels: List[int]  # 标签索引
+    labels: List[int]  # 标签索引 (YAll 索引)
+    label_names: List[str] = []  # 标签名称列表
     score: float
     distance: float
 
@@ -141,10 +152,12 @@ class SearchResponse(BaseModel):
     success: bool
     query_type: str
     label_indices: List[int] = []
+    query_label_names: List[str] = []  # 查询标签名称列表
     results: List[SearchResult] = []  # T2I/I2I 返回图像结果
     label_results: List["ImageToLabelResult"] = []  # I2T 返回标签结果
     total_results: int
     search_time_ms: float
+    hit_stats: Optional[Dict[str, Any]] = None  # 命中率统计
     plaintext_map: Optional[float] = None
     ciphertext_map: Optional[float] = None
     map_difference: Optional[float] = None

@@ -108,15 +108,25 @@ class ASPEScheme2:
 
         return p_extended
 
-    def _split_point(self, p_extended: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def _split_point(self, p_extended: np.ndarray, is_query: bool = False) -> Tuple[np.ndarray, np.ndarray]:
         """
         根据配置 S 将扩展点拆分为两个份额。
 
-        对于 S[i] = 1 的维度：拆分为随机份额
-        对于 S[i] = 0 的维度：两个份额都获得完整值
+        使用 SkNN 风格的"互补拆分"策略确保内积保持性：
+        - 建库端 (is_query=False):
+          - S[i] = 0: 两个份额都获得完整值
+          - S[i] = 1: 随机拆分
+        - 查询端 (is_query=True):
+          - S[i] = 0: 固定拆分 (r=0)，确保数值稳定
+          - S[i] = 1: 两个份额都获得完整值
+
+        这种策略确保内积保持性：
+        - 对于 S[i] = 0: p_a*q_a + p_b*q_b = p*p + 0*0 = p*p
+        - 对于 S[i] = 1: p_a*q_a + p_b*q_b = r*p + (p-r)*p = p*p
 
         参数：
             p_extended: d' 维扩展点
+            is_query: 是否为查询点
 
         返回：
             (share_a, share_b) 元组，每个都是 d' 维
@@ -126,16 +136,25 @@ class ASPEScheme2:
 
         for i in range(self.d_prime):
             if i < len(self.S) and self.S[i] == 1:
-                # 拆分此维度
-                val = p_extended[i]
-                # 随机拆分：share_a = r, share_b = val - r
-                r = np.random.randn() * val
-                share_a[i] = r
-                share_b[i] = val - r
+                if is_query:
+                    # 查询端 S=1: 复制到两个份额
+                    share_a[i] = p_extended[i]
+                    share_b[i] = p_extended[i]
+                else:
+                    # 建库端 S=1: 随机拆分
+                    val = p_extended[i]
+                    r = np.random.randn() * abs(val) if val != 0 else np.random.randn()
+                    share_a[i] = r
+                    share_b[i] = val - r
             else:
-                # 两个份额都获得完整值
-                share_a[i] = p_extended[i]
-                share_b[i] = p_extended[i]
+                if is_query:
+                    # 查询端 S=0: 固定拆分 (r=0)，确保数值稳定
+                    share_a[i] = 0.0
+                    share_b[i] = p_extended[i]
+                else:
+                    # 建库端 S=0: 复制到两个份额
+                    share_a[i] = p_extended[i]
+                    share_b[i] = p_extended[i]
 
         return share_a, share_b
 
@@ -165,7 +184,7 @@ class ASPEScheme2:
         p_extended = self._add_artificial_dimensions(p_hat, is_query=False)
 
         # 步骤 3：拆分为两个份额
-        p_a, p_b = self._split_point(p_extended)
+        p_a, p_b = self._split_point(p_extended, is_query=False)
 
         # 步骤 4：使用矩阵变换
         p_a_enc = np.dot(self.M1.T, p_a)
@@ -209,7 +228,7 @@ class ASPEScheme2:
         q_extended = self._add_artificial_dimensions(q_hat, is_query=True)
 
         # 步骤 4：拆分为两个份额
-        q_a, q_b = self._split_point(q_extended)
+        q_a, q_b = self._split_point(q_extended, is_query=True)
 
         # 步骤 5：使用逆矩阵变换
         q_a_enc = np.dot(self.M1_inv, q_a)

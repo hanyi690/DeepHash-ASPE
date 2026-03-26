@@ -4,6 +4,11 @@
 支持两种检索模式：
 1. 明文检索（传统 CNN 特征相似度）
 2. 隐私检索（ASPE 加密保护）
+
+关键改进：
+- 密钥持久化：服务重启后密钥一致
+- 明文/加密特征分离：避免混淆
+- 正确的预处理流程
 """
 
 import ssl
@@ -18,13 +23,17 @@ import sys
 import torch
 import numpy as np
 from PIL import Image
+import logging
 
 # 添加项目根目录到路径
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from core.cirtorch.networks.imageretrievalnet import init_network, extract_vectors
 from core.aspe.cnn_wrapper import ASPEForCNN
+from backend.app.services.key_manager import get_key_manager
 from torchvision import transforms
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -34,6 +43,7 @@ class ImageSearchResult:
     image_name: str
     score: float
     rank: int
+    image_url: Optional[str] = None
 
 
 class CIRService:
@@ -46,6 +56,7 @@ class CIRService:
     架构设计：
     - 使用 core.cirtorch.networks 加载 CNN 模型和提取特征
     - 使用 core.aspe.cnn_wrapper 进行 ASPE 加密
+    - 密钥通过 KeyManager 持久化
     """
 
     _instance: Optional['CIRService'] = None
@@ -74,13 +85,20 @@ class CIRService:
         self.model = None
         self.model_meta = None
 
-        # ASPE 加密
-        self.aspe = ASPEForCNN(feature_dim=feature_dim, device=str(self.device))
+        # ASPE 加密器（延迟初始化）
+        self.aspe: Optional[ASPEForCNN] = None
 
-        # 数据库
-        self.db_features: Optional[torch.Tensor] = None
+        # 明文特征（用于明文检索）
+        self.db_plaintext_features: Optional[torch.Tensor] = None  # [N, d]
+
+        # 加密特征（用于隐私检索）
+        self.db_encrypted_features: Optional[torch.Tensor] = None  # [N, 2d]
+
+        # 图像名称列表
         self.db_image_names: Optional[List[str]] = []
         self.db_dir = Path(db_dir) if db_dir else None
+
+        logger.info(f"[CIRService] 初始化：feature_dim={feature_dim}, device={self.device}")
 
     @classmethod
     def get_instance(cls) -> 'CIRService':
@@ -88,6 +106,46 @@ class CIRService:
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
+
+    def _ensure_aspe_initialized(self):
+        """确保 ASPE 加密器已初始化（使用持久化密钥）。"""
+        if self.aspe is not None:
+            return
+
+        # 创建 ASPE 实例
+        self.aspe = ASPEForCNN(feature_dim=self.feature_dim, device=str(self.device))
+
+        # 尝试从 KeyManager 加载持久化密钥
+        try:
+            key_manager = get_key_manager()
+            if key_manager.has_cir_keys():
+                keys = key_manager.get_cir_keys(feature_dim=self.feature_dim)
+                # 应用密钥
+                self.aspe.M1 = keys['M1'].to(self.device)
+                self.aspe.M2 = keys['M2'].to(self.device)
+                self.aspe.S = keys['S'].to(self.device)
+                if 'M1_inv' in keys and keys['M1_inv'] is not None:
+                    self.aspe.M1_inv = keys['M1_inv'].to(self.device)
+                if 'M2_inv' in keys and keys['M2_inv'] is not None:
+                    self.aspe.M2_inv = keys['M2_inv'].to(self.device)
+                logger.info("[CIRService] 已加载持久化 CIR 密钥")
+            else:
+                # 生成新密钥并保存
+                self.aspe.generate_keys()
+                # 保存到 KeyManager
+                key_manager._cir_keys = {
+                    'M1': self.aspe.M1.cpu(),
+                    'M2': self.aspe.M2.cpu(),
+                    'S': self.aspe.S.cpu(),
+                    'M1_inv': self.aspe.M1_inv.cpu() if self.aspe.M1_inv is not None else None,
+                    'M2_inv': self.aspe.M2_inv.cpu() if self.aspe.M2_inv is not None else None,
+                    'feature_dim': self.feature_dim
+                }
+                key_manager._save_cir_keys()
+                logger.info("[CIRService] 已生成并保存新 CIR 密钥")
+        except Exception as e:
+            logger.warning(f"[CIRService] 密钥管理失败：{e}，使用临时密钥")
+            self.aspe.generate_keys()
 
     def load_model(self, model_path: str):
         """
@@ -99,7 +157,7 @@ class CIRService:
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"模型文件不存在: {model_path}")
 
-        print(f"[CIRService] 加载模型: {model_path}")
+        logger.info(f"[CIRService] 加载模型: {model_path}")
 
         # 加载模型权重
         state = torch.load(model_path, map_location=self.device, weights_only=False)
@@ -129,9 +187,8 @@ class CIRService:
 
         # 更新特征维度
         self.feature_dim = self.model.meta['outputdim']
-        self.aspe = ASPEForCNN(feature_dim=self.feature_dim, device=str(self.device))
 
-        print(f"[CIRService] 模型加载成功: {self.model_meta['architecture']}-{self.model_meta['pooling']}")
+        logger.info(f"[CIRService] 模型加载成功: {self.model_meta['architecture']}-{self.model_meta['pooling']}")
 
     def extract_features(self,
                          image_paths: List[str],
@@ -170,7 +227,7 @@ class CIRService:
                        image_dir: str,
                        save_dir: Optional[str] = None) -> Tuple[torch.Tensor, List[str]]:
         """
-        构建加密图像数据库。
+        构建图像数据库（同时生成明文和加密特征）。
 
         Args:
             image_dir: 图像目录
@@ -182,7 +239,7 @@ class CIRService:
         if self.model is None:
             raise RuntimeError("模型未加载，请先调用 load_model()")
 
-        print(f"[CIRService] 构建数据库: {image_dir}")
+        logger.info(f"[CIRService] 构建数据库: {image_dir}")
 
         # 收集图像文件
         image_dir = Path(image_dir)
@@ -195,48 +252,50 @@ class CIRService:
         if not image_paths:
             raise ValueError(f"图像目录为空: {image_dir}")
 
-        print(f"[CIRService] 发现 {len(image_paths)} 张图像")
+        logger.info(f"[CIRService] 发现 {len(image_paths)} 张图像")
 
-        # 提取特征
+        # 提取明文特征
         features = self.extract_features(image_paths)
-        features_np = features.numpy()
+        features_np = features.numpy().T  # [N, d]
 
-        # 生成密钥
-        self.aspe.generate_keys()
+        # 保存明文特征（网络输出已经是 L2 归一化的）
+        self.db_plaintext_features = torch.from_numpy(features_np)
+
+        # 确保密钥已初始化
+        self._ensure_aspe_initialized()
 
         # 加密特征
-        print("[CIRService] 加密特征...")
-        encrypted_features = self.aspe.encrypt_database(features_np.T)  # [N, 2d]
+        logger.info("[CIRService] 加密特征...")
+        encrypted_features = self.aspe.encrypt_database(features_np)  # [N, 2d]
+        self.db_encrypted_features = encrypted_features
 
-        # 保存数据库
-        self.db_features = encrypted_features
+        # 保存图像名称
         self.db_image_names = [Path(p).name for p in image_paths]
 
         if save_dir:
             self.save_database(save_dir)
 
-        print(f"[CIRService] 数据库构建完成: {len(self.db_image_names)} 张图像")
+        logger.info(f"[CIRService] 数据库构建完成: {len(self.db_image_names)} 张图像")
 
-        return self.db_features, self.db_image_names
+        return self.db_encrypted_features, self.db_image_names
 
     def search(self,
                query_image_path: str,
-               top_k: int = 10) -> List[ImageSearchResult]:
+               top_k: int = 10,
+               use_encrypted: bool = True) -> List[ImageSearchResult]:
         """
-        在加密数据库中搜索相似图像。
+        在数据库中搜索相似图像。
 
         Args:
             query_image_path: 查询图像路径
             top_k: 返回结果数量
+            use_encrypted: 是否使用加密检索
 
         Returns:
             搜索结果列表
         """
         if self.model is None:
             raise RuntimeError("模型未加载")
-
-        if self.db_features is None:
-            raise RuntimeError("数据库未构建")
 
         if not os.path.exists(query_image_path):
             raise FileNotFoundError(f"查询图像不存在: {query_image_path}")
@@ -245,11 +304,33 @@ class CIRService:
         query_features = self.extract_features([query_image_path])
         query_feature = query_features[:, 0]  # [d]
 
-        # 加密查询特征
-        encrypted_query = self.aspe.encrypt_query(query_feature)
+        # L2 归一化查询特征（使加密内积等于余弦相似度）
+        query_feature = query_feature / (query_feature.norm() + 1e-10)
 
-        # 计算密文内积
-        scores = torch.matmul(self.db_features, encrypted_query)
+        if use_encrypted:
+            # 加密检索
+            if self.db_encrypted_features is None:
+                raise RuntimeError("加密数据库未构建")
+
+            # 确保 ASPE 已初始化
+            self._ensure_aspe_initialized()
+
+            # 加密查询特征
+            encrypted_query = self.aspe.encrypt_query(query_feature)
+
+            # 计算密文内积
+            scores = torch.matmul(self.db_encrypted_features, encrypted_query)
+        else:
+            # 明文检索
+            if self.db_plaintext_features is None:
+                raise RuntimeError("明文数据库未构建")
+
+            # L2 归一化后的内积等价于余弦相似度
+            query_norm = query_feature / (query_feature.norm() + 1e-10)
+            db_norm = self.db_plaintext_features / (
+                self.db_plaintext_features.norm(dim=1, keepdim=True) + 1e-10
+            )
+            scores = torch.matmul(db_norm, query_norm)
 
         # Top-K 排序
         top_k = min(top_k, len(self.db_image_names))
@@ -267,33 +348,115 @@ class CIRService:
 
         return results
 
+    def search_by_feature(self,
+                          query_feature: torch.Tensor,
+                          top_k: int = 10,
+                          use_encrypted: bool = True) -> List[ImageSearchResult]:
+        """
+        使用特征向量进行检索。
+
+        Args:
+            query_feature: 查询特征 [d]
+            top_k: 返回结果数量
+            use_encrypted: 是否使用加密检索
+
+        Returns:
+            搜索结果列表
+        """
+        if use_encrypted:
+            if self.db_encrypted_features is None:
+                raise RuntimeError("加密数据库未构建")
+
+            self._ensure_aspe_initialized()
+            # L2 归一化查询特征
+            query_normalized = query_feature / (query_feature.norm() + 1e-10)
+            encrypted_query = self.aspe.encrypt_query(query_normalized)
+            scores = torch.matmul(self.db_encrypted_features, encrypted_query)
+        else:
+            if self.db_plaintext_features is None:
+                raise RuntimeError("明文数据库未构建")
+
+            query_norm = query_feature / (query_feature.norm() + 1e-10)
+            db_norm = self.db_plaintext_features / (
+                self.db_plaintext_features.norm(dim=1, keepdim=True) + 1e-10
+            )
+            scores = torch.matmul(db_norm, query_norm)
+
+        top_k = min(top_k, len(self.db_image_names))
+        topk_scores, topk_indices = torch.topk(scores, k=top_k)
+
+        results = []
+        for rank, (score, idx) in enumerate(zip(topk_scores.tolist(), topk_indices.tolist())):
+            results.append(ImageSearchResult(
+                image_id=str(idx),
+                image_name=self.db_image_names[idx],
+                score=float(score),
+                rank=rank + 1
+            ))
+
+        return results
+
     def save_database(self, save_dir: str):
-        """保存加密数据库到磁盘。"""
+        """保存数据库到磁盘。"""
         save_dir = Path(save_dir)
         save_dir.mkdir(parents=True, exist_ok=True)
 
-        torch.save(self.db_features, save_dir / 'encrypted_features.pth')
+        # 保存明文特征
+        if self.db_plaintext_features is not None:
+            torch.save(self.db_plaintext_features, save_dir / 'plaintext_features.pth')
+
+        # 保存加密特征
+        if self.db_encrypted_features is not None:
+            torch.save(self.db_encrypted_features, save_dir / 'encrypted_features.pth')
+
+        # 保存图像名称
         torch.save(self.db_image_names, save_dir / 'image_names.pth')
-        self.aspe.save_keys(save_dir / 'aspe_keys.pth')
+
+        # 保存密钥（通过 KeyManager）
+        self._ensure_aspe_initialized()
 
         self.db_dir = save_dir
-        print(f"[CIRService] 数据库已保存: {save_dir}")
+        logger.info(f"[CIRService] 数据库已保存: {save_dir}")
 
-    def load_database(self, db_dir: str):
-        """从磁盘加载加密数据库。"""
+    def load_database(self, db_dir: str, load_encrypted: bool = True, load_plaintext: bool = True):
+        """
+        从磁盘加载数据库。
+
+        Args:
+            db_dir: 数据库目录
+            load_encrypted: 是否加载加密特征
+            load_plaintext: 是否加载明文特征
+        """
         db_dir = Path(db_dir)
 
-        if not (db_dir / 'encrypted_features.pth').exists():
-            raise FileNotFoundError(f"数据库文件不存在: {db_dir}")
+        # 加载明文特征
+        if load_plaintext and (db_dir / 'plaintext_features.pth').exists():
+            self.db_plaintext_features = torch.load(
+                db_dir / 'plaintext_features.pth',
+                map_location=self.device, weights_only=False
+            )
+            logger.info(f"[CIRService] 已加载明文特征: {self.db_plaintext_features.shape}")
 
-        self.db_features = torch.load(db_dir / 'encrypted_features.pth',
-                                       map_location=self.device, weights_only=False)
-        self.db_image_names = torch.load(db_dir / 'image_names.pth',
-                                          weights_only=False)
-        self.aspe.load_keys(db_dir / 'aspe_keys.pth')
+        # 加载加密特征
+        if load_encrypted and (db_dir / 'encrypted_features.pth').exists():
+            self.db_encrypted_features = torch.load(
+                db_dir / 'encrypted_features.pth',
+                map_location=self.device, weights_only=False
+            )
+            logger.info(f"[CIRService] 已加载加密特征: {self.db_encrypted_features.shape}")
+
+        # 加载图像名称
+        if (db_dir / 'image_names.pth').exists():
+            self.db_image_names = torch.load(
+                db_dir / 'image_names.pth',
+                weights_only=False
+            )
+
+        # 加载密钥
+        self._ensure_aspe_initialized()
 
         self.db_dir = db_dir
-        print(f"[CIRService] 数据库已加载: {len(self.db_image_names)} 张图像")
+        logger.info(f"[CIRService] 数据库已加载: {len(self.db_image_names)} 张图像")
 
     def initialize(self,
                    architecture: str = 'resnet101',
@@ -319,7 +482,7 @@ class CIRService:
             self.load_model(model_path)
         else:
             # 自动初始化 torchvision 预训练模型
-            print(f"[CIRService] 自动初始化预训练模型: {architecture}-{pooling}")
+            logger.info(f"[CIRService] 自动初始化预训练模型: {architecture}-{pooling}")
             self._init_pretrained_model(architecture, pooling, whitening)
 
         if index_dir and os.path.exists(index_dir):
@@ -359,20 +522,18 @@ class CIRService:
         self.model_meta = self.model.meta
         self.feature_dim = self.model.meta['outputdim']
 
-        # 更新 ASPE 实例的特征维度
-        self.aspe = ASPEForCNN(feature_dim=self.feature_dim, device=str(self.device))
-
-        print(f"[CIRService] 预训练模型初始化成功: {architecture}-{pooling}, 特征维度: {self.feature_dim}")
+        logger.info(f"[CIRService] 预训练模型初始化成功: {architecture}-{pooling}, 特征维度: {self.feature_dim}")
 
     def get_status(self) -> Dict[str, Any]:
         """获取服务状态。"""
         return {
             "initialized": self._initialized,
             "model_loaded": self.model is not None,
-            "indexed": self.db_features is not None,
+            "plaintext_indexed": self.db_plaintext_features is not None,
+            "encrypted_indexed": self.db_encrypted_features is not None,
             "index_size": len(self.db_image_names) if self.db_image_names else 0,
             "feature_dim": self.feature_dim,
-            "keys_loaded": self.aspe.M1 is not None
+            "keys_loaded": self.aspe is not None and self.aspe.M1 is not None
         }
 
     def get_index_size(self) -> int:
@@ -386,7 +547,7 @@ class CIRService:
     @property
     def is_indexed(self) -> bool:
         """检查是否已构建索引。"""
-        return self.db_features is not None
+        return self.db_plaintext_features is not None or self.db_encrypted_features is not None
 
 
 # Singleton accessor

@@ -218,7 +218,7 @@ class DCMHEvaluator:
         elif self.model is not None:
             self.model.eval()
             for i in range(0, n_samples, self.batch_size):
-                batch = images[i:i+self.batch_size] / 255.0
+                batch = images[i:i+self.batch_size]
                 if self.use_gpu:
                     batch = batch.cuda()
                 output = self.model.image_module(batch)
@@ -394,6 +394,7 @@ class DCMHEvaluator:
         执行 ASPE 加密评估。
 
         验证密文 mAP 与明文 mAP 是否相等。
+        使用 Scheme 2（双矩阵增强方案）进行加密。
 
         参数：
             qBX: 查询图像哈希码
@@ -405,15 +406,18 @@ class DCMHEvaluator:
         返回：
             ASPE 评估结果字典
         """
-        from core.aspe.dcmh_wrapper import ASPEForDCMH
+        from core.aspe.dcmh_wrapper_v2 import ASPEForDCMHv2
 
         print("\n" + "=" * 60)
-        print("ASPE 加密评估")
+        print("ASPE 加密评估 (Scheme 2)")
         print("=" * 60)
 
-        # 1. 初始化 ASPE
-        print(f"初始化 ASPE (bit={self.bit})...")
-        aspe = ASPEForDCMH(bit_dim=self.bit, seed=42)
+        # 1. 初始化 ASPE V2
+        print(f"初始化 ASPE V2 (bit={self.bit}, Scheme 2)...")
+        aspe = ASPEForDCMHv2(bit_dim=self.bit, seed=42)
+        print(f"  扩展维度 d': {aspe.actual_d_prime}")
+        print(f"  密文维度: {2 * aspe.actual_d_prime}")
+        print(f"  安全级别: 3 (抵抗已知明文攻击)")
 
         # 2. 加密检索库哈希码
         print("加密检索库哈希码...")
@@ -474,7 +478,11 @@ class DCMHEvaluator:
                 'map_t2i': float(error_t2i)
             },
             'consistency_verified': consistent,
-            'bit': self.bit
+            'scheme': 'Scheme 2',
+            'security_level': 3,
+            'bit': self.bit,
+            'd_prime': aspe.actual_d_prime,
+            'ciphertext_dim': 2 * aspe.actual_d_prime
         }
 
         print("\nASPE 评估完成!")
