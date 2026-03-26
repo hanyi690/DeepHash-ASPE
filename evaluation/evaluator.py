@@ -135,7 +135,17 @@ class DCMHEvaluator:
         # 尝试加载分离模型（Reference 实现）
         if self.img_model_path.exists() and self.txt_model_path.exists():
             print(f"加载分离模型...")
-            self.img_model = build_dcmh_image_model(bit=self.bit, pretrain_model_path=None)
+            # 加载预训练模型以初始化 mean（与训练时一致）
+            pretrain_path = Path(__file__).parent.parent / 'data' / 'imagenet-vgg-f.mat'
+            if pretrain_path.exists():
+                print(f"  加载预训练模型: {pretrain_path}")
+                self.img_model = build_dcmh_image_model(
+                    bit=self.bit,
+                    pretrain_model_path=str(pretrain_path)
+                )
+            else:
+                print(f"  警告: 预训练模型不存在，mean 将为零张量")
+                self.img_model = build_dcmh_image_model(bit=self.bit, pretrain_model_path=None)
             self.txt_model = build_dcmh_text_model(y_dim=self.y_dim, bit=self.bit)
 
             self.img_model.load_state_dict(
@@ -406,18 +416,18 @@ class DCMHEvaluator:
         返回：
             ASPE 评估结果字典
         """
-        from core.aspe.dcmh_wrapper_v2 import ASPEForDCMHv2
+        from core.aspe.dcmh_wrapper import ASPEForDCMH
 
         print("\n" + "=" * 60)
-        print("ASPE 加密评估 (Scheme 2)")
+        print("ASPE 加密评估 (SkNN 风格)")
         print("=" * 60)
 
-        # 1. 初始化 ASPE V2
-        print(f"初始化 ASPE V2 (bit={self.bit}, Scheme 2)...")
-        aspe = ASPEForDCMHv2(bit_dim=self.bit, seed=42)
-        print(f"  扩展维度 d': {aspe.actual_d_prime}")
-        print(f"  密文维度: {2 * aspe.actual_d_prime}")
-        print(f"  安全级别: 3 (抵抗已知明文攻击)")
+        # 1. 初始化 ASPE
+        print(f"初始化 ASPE (bit={self.bit}, SkNN 风格)...")
+        aspe = ASPEForDCMH(bit_dim=self.bit, seed=42)
+        print(f"  哈希码维度: {self.bit}")
+        print(f"  密文维度: {2 * self.bit}")
+        print(f"  特性: 密文内积 = 明文内积")
 
         # 2. 加密检索库哈希码
         print("加密检索库哈希码...")
@@ -451,18 +461,29 @@ class DCMHEvaluator:
             query_labels, database_labels
         )
 
-        # 5. 验证排序一致性
-        print("验证排序一致性...")
-        consistent = aspe.verify_sorting_consistency(qBX[:10], rBX[:100])
-        print(f"  排序一致性验证: {'通过' if consistent else '失败'}")
-
-        # 6. 计算误差
+        # 5. 计算误差
         error_i2t = abs(cipher_map_i2t - map_results['map_i2t'])
         error_t2i = abs(cipher_map_t2i - map_results['map_t2i'])
 
         print("\n结果对比:")
         print(f"  mAP(i→t): 明文={map_results['map_i2t']:.6f}, 密文={cipher_map_i2t:.6f}, 误差={error_i2t:.2e}")
         print(f"  mAP(t→i): 明文={map_results['map_t2i']:.6f}, 密文={cipher_map_t2i:.6f}, 误差={error_t2i:.2e}")
+
+        # 6. 验证排序一致性
+        print("\n验证排序一致性...")
+        sort_verify_i2t = aspe.verify_sorting_consistency(qBX, rBY)
+        sort_verify_t2i = aspe.verify_sorting_consistency(qBY, rBX)
+
+        print(f"  i→t 排序一致性: {'通过' if sort_verify_i2t['passed'] else '失败'}")
+        print(f"    前10交集: {sort_verify_i2t['overlap_ratios']['10_mean']:.4f}")
+        print(f"    前50交集: {sort_verify_i2t['overlap_ratios']['50_mean']:.4f}")
+        print(f"    前100交集: {sort_verify_i2t['overlap_ratios']['100_mean']:.4f}")
+        print(f"  t→i 排序一致性: {'通过' if sort_verify_t2i['passed'] else '失败'}")
+        print(f"    前10交集: {sort_verify_t2i['overlap_ratios']['10_mean']:.4f}")
+        print(f"    前50交集: {sort_verify_t2i['overlap_ratios']['50_mean']:.4f}")
+        print(f"    前100交集: {sort_verify_t2i['overlap_ratios']['100_mean']:.4f}")
+
+        consistency_verified = sort_verify_i2t['passed'] and sort_verify_t2i['passed']
 
         results = {
             'plaintext': {
@@ -477,12 +498,26 @@ class DCMHEvaluator:
                 'map_i2t': float(error_i2t),
                 'map_t2i': float(error_t2i)
             },
-            'consistency_verified': consistent,
-            'scheme': 'Scheme 2',
-            'security_level': 3,
+            'sorting_consistency': {
+                'verified': consistency_verified,
+                'i2t': {
+                    'passed': sort_verify_i2t['passed'],
+                    'overlap_10': float(sort_verify_i2t['overlap_ratios']['10_mean']),
+                    'overlap_50': float(sort_verify_i2t['overlap_ratios']['50_mean']),
+                    'overlap_100': float(sort_verify_i2t['overlap_ratios']['100_mean']),
+                    'max_distance_error': float(np.max(sort_verify_i2t['distance_errors']))
+                },
+                't2i': {
+                    'passed': sort_verify_t2i['passed'],
+                    'overlap_10': float(sort_verify_t2i['overlap_ratios']['10_mean']),
+                    'overlap_50': float(sort_verify_t2i['overlap_ratios']['50_mean']),
+                    'overlap_100': float(sort_verify_t2i['overlap_ratios']['100_mean']),
+                    'max_distance_error': float(np.max(sort_verify_t2i['distance_errors']))
+                }
+            },
+            'scheme': 'ASPE (SkNN)',
             'bit': self.bit,
-            'd_prime': aspe.actual_d_prime,
-            'ciphertext_dim': 2 * aspe.actual_d_prime
+            'ciphertext_dim': 2 * self.bit
         }
 
         print("\nASPE 评估完成!")

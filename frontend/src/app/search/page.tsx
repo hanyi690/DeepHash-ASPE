@@ -581,6 +581,27 @@ export default function UnifiedSearchPage() {
                     </span>
                   )}
                 </div>
+                {/* 类别名称显示 */}
+                {result.category_names && result.category_names.length > 0 && (
+                  <div className="pt-2 border-t border-gray-200 mt-2">
+                    <p className="text-xs text-gray-500 mb-1">类别</p>
+                    <div className="flex flex-wrap gap-1 justify-center">
+                      {result.category_names.slice(0, 4).map((name, i) => (
+                        <span
+                          key={i}
+                          className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs"
+                        >
+                          {name}
+                        </span>
+                      ))}
+                      {result.category_names.length > 4 && (
+                        <span className="text-xs text-gray-400">
+                          +{result.category_names.length - 4}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
                 <div className="text-xs text-gray-500">
                   得分: {result.score.toFixed(4)}
                 </div>

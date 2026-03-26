@@ -72,6 +72,7 @@ export interface ImageToTagResult {
   score: number;
   distance: number;
   thumbnail_url?: string;  // 来源图像缩略图URL
+  category_names?: string[];  // LAll 类别名称
 }
 
 export interface HitStats {

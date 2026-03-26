@@ -138,7 +138,11 @@ def main():
             print(f"  密文 mAP(i→t): {aspe['ciphertext']['map_i2t']:.6f}")
             print(f"  明文 mAP(t→i): {aspe['plaintext']['map_t2i']:.6f}")
             print(f"  密文 mAP(t→i): {aspe['ciphertext']['map_t2i']:.6f}")
-            print(f"  排序一致性验证: {'通过' if aspe['consistency_verified'] else '失败'}")
+            if 'sorting_consistency' in aspe:
+                sc = aspe['sorting_consistency']
+                print(f"  排序一致性验证: {'通过' if sc['verified'] else '失败'}")
+                print(f"    i→t 前10交集: {sc['i2t']['overlap_10']:.4f}")
+                print(f"    t→i 前10交集: {sc['t2i']['overlap_10']:.4f}")
 
     except FileNotFoundError as e:
         print(f"\n错误：{e}")

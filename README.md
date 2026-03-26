@@ -48,11 +48,8 @@ DeepHash-ASPE/
 │
 ├── core/                   # 核心库
 │   ├── aspe/               # ASPE 加密方案
-│   │   ├── scheme1.py      # 基础 2 级安全方案
-│   │   ├── scheme2.py      # 增强 3 级安全方案
 │   │   ├── keygen.py       # 密钥生成
-│   │   ├── dcmh_wrapper.py # DCMH 哈希加密包装器 (Scheme 1)
-│   │   ├── dcmh_wrapper_v2.py # DCMH 哈希加密包装器 (Scheme 2)
+│   │   ├── dcmh_wrapper.py # DCMH 哈希加密包装器 (SkNN 风格)
 │   │   └── cnn_wrapper.py  # CNN 特征加密包装器 (SkNN)
 │   │
 │   ├── hashing/            # 深度哈希模型
@@ -171,12 +168,14 @@ python scripts/infer_tag_mapping.py
 ```
 
 **映射原理**：
+
 1. 统计 YAll 每列的 1 的数量
 2. 读取 common_tags.txt 中每个 tag 的频率
 3. 使用匈牙利算法匹配，最小化差异
 4. 验证：高频 tag（explore、sky、nikon 等）映射差异 < 35
 
 **映射文件**：
+
 - `tag_mapping.npy`：YAll 列索引 -> tag 名称的列表
 - `tag_mapping.txt`：文本版本，便于查看
 
@@ -272,7 +271,7 @@ python scripts/build_all_cache.py --type all
 
 ```python
 from core.hashing.dcmh_model import DCMHModel
-from core.aspe.dcmh_wrapper_v2 import ASPEForDCMHv2
+from core.aspe.dcmh_wrapper import ASPEForDCMH
 
 # 创建 DCMH 模型
 model = DCMHModel(bit=64, y_dim=24)  # Flickr25K 有 24 个类别
@@ -281,14 +280,14 @@ model = DCMHModel(bit=64, y_dim=24)  # Flickr25K 有 24 个类别
 img_hash = model.encode_image(image)
 txt_hash = model.encode_text(text_labels)
 
-# ASPE Scheme 2 加密 (默认，安全级别 3)
-aspe = ASPEForDCMHv2(bit_dim=64)
+# ASPE 加密 (SkNN 风格，密文内积 = 明文内积)
+aspe = ASPEForDCMH(bit_dim=64)
 # 密钥自动生成: M1, M2, S 矩阵
 
 encrypted_db = aspe.GenEnc(database_hashes)      # 加密数据库
 trapdoor = aspe.GenTrap(query_hash)              # 生成陷阱门
 
-# 密文检索（mAP 与明文近似相等，误差 < 1e-3）
+# 密文检索（密文内积 = 明文内积，mAP 完全一致）
 hamming_dist = aspe.ciphertext_hamming_distance(trapdoor, encrypted_db)
 ```
 
@@ -349,16 +348,24 @@ results = cir_eval.evaluate()  # 默认启用 ASPE 验证
 
 **数据格式**：
 
-系统现在从原始 JPG 图像和标签文件加载数据，确保检索结果与图像内容对应：
+系统从原始 JPG 图像和标签文件加载数据：
 
 ```
 data/dcmh/flickr25k/
-├── mirflickr/           # 图像目录
+├── mirflickr/               # 原始图像目录
 │   └── im1.jpg ~ im25000.jpg
 ├── doc/
-│   └── common_tags.txt  # 标签名列表（1386 个）
-└── tag_mapping.npy      # 标签索引映射（common_tags -> YAll）
+│   └── common_tags.txt      # 标签名列表（1386个）
+├── meta/                    # 元数据目录
+├── img_model.pth            # 图像编码器（部署后）
+├── txt_model.pth            # 文本编码器（部署后）
+└── tag_mapping.npy          # 标签索引映射
 ```
+
+**数据集文件**：
+
+- `FLICKR-25K.mat`：位于 `data/` 根目录，包含预处理后的图像数据、YAll、LAll
+- `mirflickr/`：原始 JPG 图像，用于高质量显示检索结果
 
 **下载方式**：
 
@@ -370,13 +377,13 @@ data/dcmh/flickr25k/
 
 原始 Flickr25k 数据集中很多图片的标签不在 `common_tags.txt` 中。系统提供了清理脚本，生成过滤后的数据集：
 
-| 指标             | 数值     |
-| ---------------- | -------- |
-| 原始图片数       | 25,000   |
-| 有效图片数       | 20,359   |
-| 无效图片数       | 4,641    |
-| 过滤前总标签数   | 223,537  |
-| 过滤后总标签数   | 94,282   |
+| 指标           | 数值    |
+| -------------- | ------- |
+| 原始图片数     | 25,000  |
+| 有效图片数     | 20,359  |
+| 无效图片数     | 4,641   |
+| 过滤前总标签数 | 223,537 |
+| 过滤后总标签数 | 94,282  |
 
 **目录结构**：
 
@@ -432,32 +439,37 @@ python scripts/download_cir_dataset.py --all
    - Paris6k 图像: https://www.robots.ox.ac.uk/~vgg/data/parisbuildings/
    - Ground Truth: http://cmp.felk.cvut.cz/cnnimageretrieval/data/test/
 
-## 预训练模型
-
 ## 缓存结构
 
 系统使用预计算缓存加速检索，缓存存储在 `backend/cache/` 目录：
 
 ```
 backend/cache/
-├── dcmh/                      # DCMH 缓存
+├── dcmh/                          # DCMH 缓存
 │   └── flickr25k/
-│       ├── labels.npz         # 标签（190MB，只存一次）
-│       ├── database_image.npz # 图像哈希码（4.4MB）
-│       ├── database_text.npz  # 文本哈希码（4.4MB）
-│       ├── encrypted.npz      # 加密数据库（9MB）
-│       └── query.npz          # 查询数据（11MB）
+│       ├── database_image.npz     # 图像哈希码 [18015, 64]（4.4MB）
+│       ├── database_text.npz      # 文本哈希码 [18015, 64]（4.4MB）
+│       ├── encrypted.npz          # 加密数据库 [18015, 128]（18MB）
+│       ├── lall.npz               # LAll 类别标签 [18015, 24]（3.5MB）
+│       ├── query.npz              # 查询数据 [2000, ...]（11MB）
+│       └── tags.npz               # YAll 标签向量 [18015, 1386]（200MB）
 │
-└── cir/                       # CIR 缓存
+└── cir/                           # CIR 缓存
     ├── roxford5k/
-    │   ├── features.npz       # 明文特征
-    │   ├── encrypted.npz      # 加密特征
-    │   └── image_names.npz
+    │   ├── features.npz           # 明文特征 [N, 2048]（42MB）
+    │   └── encrypted.npz          # 加密特征 [N, 4096]（83MB）
     └── rparis6k/
-        └── ...
+        ├── features.npz
+        └── encrypted.npz
 ```
 
-**优化说明**：labels 数据单独存储，避免在 image/text 缓存中重复，节省约 385MB 空间。
+**缓存说明**：
+
+- `database_image.npz`：检索库图像哈希码，用于标签搜图
+- `database_text.npz`：检索库文本哈希码，用于图搜标签
+- `lall.npz`：24维类别标签，用于 mAP 计算
+- `tags.npz`：1386维标签向量，用于检索结果显示标签名称
+- `encrypted.npz`：ASPE 加密后的特征/哈希码（维度翻倍）
 
 **缓存构建**：
 
@@ -500,36 +512,45 @@ python scripts/download_cir_model.py --list
 2. 手动下载：从浏览器下载后放到 `data/networks/` 目录
    - GL18 模型：http://cmp.felk.cvut.cz/cnnimageretrieval/data/networks/gl18/gl18-tl-resnet101-gem-w-a4d43db.pth
 
-### 模型存储结构
+## 数据存储结构
 
 ```
 data/
-├── dcmh/                                  # DCMH 部署模型
+├── FLICKR-25K.mat                          # Flickr25K 数据集（3.3GB）
+├── imagenet-vgg-f.mat                      # DCMH 预训练权重
+│
+├── dcmh/                                   # DCMH 数据和模型
 │   └── flickr25k/
-│       ├── img_model.pth                  # 图像编码器
-│       ├── txt_model.pth                  # 文本编码器
-│       └── deploy_record.json             # 部署记录
+│       ├── mirflickr/                      # 原始图像目录
+│       │   └── im1.jpg ~ im25000.jpg
+│       ├── doc/
+│       │   └── common_tags.txt             # 标签名列表（1386个）
+│       ├── meta/                           # 元数据
+│       │   ├── tags/, tags_raw/
+│       │   ├── exif/, exif_raw/
+│       │   └── license/
+│       ├── img_model.pth                   # 图像编码器（228MB）
+│       ├── txt_model.pth                   # 文本编码器（47MB）
+│       ├── tag_mapping.npy                 # 标签索引映射
+│       ├── tag_mapping.txt                 # 标签映射文本版
+│       ├── training_result.json            # 训练配置
+│       └── deploy_record.json              # 部署记录
 │
-├── networks/                              # 预训练模型
-│   ├── imagenet-caffe-resnet50-features-ac468af.pth   # ResNet50 特征
-│   ├── imagenet-caffe-resnet101-features-10a101d.pth  # ResNet101 特征
-│   └── gl18-tl-resnet101-gem-w-a4d43db.pth            # 推荐，最高性能
+├── networks/                               # 预训练模型
+│   ├── imagenet-caffe-resnet50-features-ac468af.pth
+│   ├── imagenet-caffe-resnet101-features-10a101d.pth
+│   └── gl18-tl-resnet101-gem-w-a4d43db.pth # 推荐（187MB）
 │
-├── whiten/                                # 白化权重
-│   └── retrieval-SfM-120k-resnet101-gem-whiten-22ab0c1.pth  # ResNet101 白化
+├── whiten/                                 # 白化权重
+│   └── retrieval-SfM-120k-resnet101-gem-whiten-22ab0c1.pth
 │
-├── test/                                  # 评估数据集
-│   ├── roxford5k/
-│   │   ├── jpg/                           # 图像
-│   │   └── gnd_roxford5k.pkl              # Ground Truth
-│   └── rparis6k/
-│       ├── jpg/
-│       └── gnd_rparis6k.pkl
-│
-├── flickr25k/                             # DCMH 数据集
-│   └── FLICKR-25K.mat
-│
-└── imagenet-vgg-f.mat                     # DCMH 预训练
+└── test/                                   # CIR 评估数据集
+    ├── roxford5k/
+    │   ├── jpg/                            # 图像
+    │   └── gnd_roxford5k.pkl               # Ground Truth
+    └── rparis6k/
+        ├── jpg/
+        └── gnd_rparis6k.pkl
 ```
 
 ## 检索模式
@@ -561,43 +582,266 @@ data/
 5. 返回 Top-K 相似图像的标签
 
 **注意**：两种模式使用不同的数据库：
+
 - 标签搜图：使用图像哈希码数据库
 - 图搜标签：使用文本哈希码数据库
 
 ## ASPE 加密原理
 
-系统支持两种 ASPE 加密方案：
+系统使用 ASPE 算法（SkNN 风格）：
 
-### Scheme 1 (基础方案)
+### ASPE 算法 (SkNN 风格)
 
-- **安全级别**: 2 (抵抗已知样本攻击)
-- **密钥**: 单矩阵 M
-- **维度扩展**: d → d+1
-- **适用场景**: 对安全性要求不高的场景
-
-### Scheme 2 (增强方案，当前默认使用)
-
-- **安全级别**: 3 (抵抗已知明文攻击)
+- **特性**: 密文内积 = 明文内积
 - **密钥**: 双矩阵 M1, M2 + 拆分向量 S
-- **维度扩展**: d → 2×d' (d' = max(d+1, 80))
+- **密文维度**: 2×bit (无扩展)
 - **拆分策略**: SkNN 风格互补拆分
   - 建库端: S=0 复制, S=1 随机拆分
   - 查询端: S=0 固定拆分(r=0), S=1 复制
-- **适用场景**: 高安全性要求的跨模态检索
+- **适用场景**: 高精度跨模态检索
 
 **加密原理**:
 
 ```
-建库端：S=0 复制，S=1 随机拆分 → p_a, p_b
-查询端：S=0 拆分 (r=0)，S=1 复制 → q_a, q_b
-密文内积 = p_a·q_a + p_b·q_b = 明文内积（保持性）
+建库端：S=0 复制，S=1 随机拆分 → v1, v2
+查询端：S=0 拆分 (r=0)，S=1 复制 → w1, w2
+密文内积 = v1·w1 + v2·w2 = v·w（明文内积，完全保持）
 ```
 
 **安全属性**：
 
 - 距离不可恢复
 - 陷阱门不可链接
-- 密文 mAP ≈ 明文 mAP (误差 < 1e-3)
+- 密文 mAP = 明文 mAP（完全一致）
+
+## 数据计算方式说明
+
+### 汉明距离计算
+
+**明文汉明距离**：
+
+```python
+# 哈希码格式：{-1, +1}^{N × bit}
+# 汉明距离与内积的线性关系：
+hamming_dist = 0.5 × (bit - inner_product)
+
+# 示例：bit=64
+# 完全相同：内积=64，距离=0
+# 完全相反：内积=-64，距离=64
+# 随机码：内积≈0，距离≈32
+```
+
+**密文汉明距离（ASPE 加密）**：
+
+```python
+# 密文内积 = 明文内积（ASPE 核心特性）
+encrypted_inner = q1 @ r1.T + q2 @ r2.T  # 密文内积
+
+# 密文汉明距离 = 明文汉明距离
+hamming_dist = 0.5 × (bit - encrypted_inner)
+```
+
+### mAP 计算
+
+**GPU 加速版本**：
+
+```python
+def calc_map_k(qB, rB, query_L, retrieval_L, k=None):
+    """
+    计算跨模态检索的 mAP@K。
+
+    参数：
+        qB: {-1,+1}^{m×q} 查询哈希码
+        rB: {-1,+1}^{n×q} 检索库哈希码
+        query_L: {0,1}^{m×l} 查询标签（LAll 类别标签）
+        retrieval_L: {0,1}^{n×l} 检索库标签（LAll 类别标签）
+
+    返回：
+        mAP 值
+    """
+    # 1. 计算汉明距离矩阵 [m, n]
+    hamm = 0.5 × (bit - qB @ rB.T)
+
+    # 2. 计算相关性矩阵 [m, n]
+    # 如果查询标签与检索库标签有交集，则为相关
+    gnd = (query_L @ retrieval_L.T > 0)
+
+    # 3. 对每个查询计算 AP
+    for each query:
+        # 按距离排序（升序）
+        sorted_indices = argsort(hamm)
+
+        # 计算平均精度
+        AP = mean(precision at each relevant position)
+
+    # 4. 返回所有查询的 mAP
+    return mean(all APs)
+```
+
+**关键点**：
+
+- 使用 **LAll（24维类别标签）** 计算 mAP，而非 YAll（1386维文本标签）
+- 相关性定义：查询与检索库至少有一个共同类别
+
+### 命中率计算
+
+前端返回的 `HitStats` 包含两种命中率：
+
+```typescript
+interface HitStats {
+  // 标签命中（YAll）
+  tag_hits: number;          // 命中 YAll 标签的结果数
+  tag_hit_rate: number;      // tag_hits / total_results
+
+  // 类别命中（LAll）- 与评估 mAP 对应
+  category_hits: number;     // 命中 LAll 类别的结果数
+  category_hit_rate: number; // category_hits / total_results
+
+  // 查询信息
+  query_tags: number[];      // 查询的 YAll 索引
+  query_tag_names: string[]; // 查询标签名称
+}
+```
+
+**计算方式**：
+
+```python
+# YAll 标签命中：检索结果包含查询标签
+tag_hit = any(query_tag in result_tags)
+
+# LAll 类别命中：检索结果与查询有共同类别
+# 这与 mAP 计算的相关性定义一致
+category_hit = any((result_LAll > 0) & (query_LAll > 0))
+```
+
+### CIR 检索计算
+
+#### 特征提取
+
+CIR 使用 CNN 模型（如 ResNet101-GeM）提取图像特征：
+
+```python
+# 特征维度：2048（ResNet101-GeM）
+# 图像预处理：Resize → Tensor → Normalize
+features = model.extract_vectors(images)  # [N, 2048]
+```
+
+#### 相似度计算
+
+CIR 使用**内积**作为相似度度量（非汉明距离）：
+
+```python
+# 明文相似度矩阵 [Q, N]
+similarities = query_features @ database_features.T
+
+# 排序：降序（相似度越高越相似）
+ranks = np.argsort(-similarities, axis=1)
+```
+
+#### 密文相似度（ASPE 加密）
+
+```python
+# 加密后维度：2 × feature_dim = 4096
+encrypted_db = aspe.encrypt_database(db_features)    # [N, 4096]
+encrypted_query = aspe.encrypt_query(query_feature)  # [4096]
+
+# 密文内积 = 明文内积
+cipher_similarities = encrypted_db @ encrypted_query.T
+```
+
+#### CIR mAP 计算（Revisited 协议）
+
+ROxford5k/RParis6k 使用三种难度的 mAP 评估：
+
+```python
+# Easy: 只考虑 easy 标注作为正例
+gnd['ok'] = gnd[i]['easy']
+gnd['junk'] = gnd[i]['junk'] + gnd[i]['hard']
+
+# Medium: easy + hard 作为正例
+gnd['ok'] = gnd[i]['easy'] + gnd[i]['hard']
+gnd['junk'] = gnd[i]['junk']
+
+# Hard: 只考虑 hard 标注作为正例
+gnd['ok'] = gnd[i]['hard']
+gnd['junk'] = gnd[i]['junk'] + gnd[i]['easy']
+```
+
+**关键点**：
+
+- junk 标注不计入 AP 计算（既不是正例也不是负例）
+- 密文 mAP 与明文 mAP 完全一致
+
+## API 返回数据说明
+
+### `/api/search` 返回结构
+
+```typescript
+interface UnifiedSearchResponse {
+  success: boolean;              // 请求是否成功
+  query_type: string;            // 'tag_to_image' | 'image_to_tag'
+  tag_indices?: number[];        // 查询的 YAll 标签索引
+  query_tag_names?: string[];    // 查询标签名称
+  results: SearchResult[];       // 标签搜图结果
+  tag_results: ImageToTagResult[]; // 图搜标签结果
+  total_results: number;         // 结果总数
+  search_time_ms: number;        // 搜索耗时（毫秒）
+  hit_stats?: HitStats;          // 命中率统计
+  encryption_info?: EncryptionInfo; // 加密信息
+  query_hash_code?: number[];    // 查询哈希码（用于调试）
+}
+```
+
+### `SearchResult` 字段说明
+
+```typescript
+interface SearchResult {
+  rank: number;              // 排名（1-based）
+  image_id: number;          // 图像 ID
+  score: number;             // 相似度分数 = 1 / (1 + distance)
+  distance: number;          // 汉明距离（0 ~ bit）
+  tags: number[];            // 该图像的 YAll 标签索引
+  tag_names: string[];       // 标签名称
+  hit_tags: number[];        // 命中的查询标签索引
+  hit_tag_names: string[];   // 命中的标签名称
+  thumbnail_url?: string;    // 缩略图 URL
+  hash_code?: number[];      // 该图像的哈希码
+  category_hit: boolean;     // LAll 类别是否命中
+  tag_hit: boolean;          // YAll 标签是否命中
+}
+```
+
+### `HitStats` 计算方式
+
+```typescript
+interface HitStats {
+  total_results: number;     // 返回的结果数量
+
+  // YAll 标签命中
+  tag_hits: number;          // tag_hit=true 的结果数
+  tag_hit_rate: number;      // tag_hits / total_results
+
+  // LAll 类别命中（与 mAP 相关性一致）
+  category_hits: number;     // category_hit=true 的结果数
+  category_hit_rate: number; // category_hits / total_results
+
+  // 查询信息
+  query_tags: number[];      // 查询的 YAll 索引
+  query_tag_names: string[]; // 查询标签名称
+}
+```
+
+### `EncryptionInfo` 内容
+
+```typescript
+interface EncryptionInfo {
+  method: string;            // 加密方法：'ASPE (SkNN)'
+  query_encrypted: boolean;  // 查询是否加密
+  database_encrypted: boolean; // 数据库是否加密
+  security_level: number;    // 安全级别
+  bit_dim: number;           // 哈希码位数
+}
+```
 
 ## API 端点
 
@@ -611,23 +855,41 @@ data/
 
 ## 性能
 
-### DCMH 在 Flickr25K 上的典型性能（bit=64）
+### DCMH 在 Flickr25K 上的性能（bit=64）
 
-| 指标      | 值                |
-| --------- | ----------------- |
-| mAP(i→t) | ~0.54             |
-| mAP(t→i) | ~0.54             |
-| 训练时间  | ~30min (RTX 4060) |
+| 指标      | 值                        |
+| --------- | ------------------------- |
+| mAP(i→t) | **0.7409**          |
+| mAP(t→i) | **0.7716**          |
+| 平均 mAP  | **0.7563**          |
+| 训练时间  | ~180min (RTX 4060 laptop) |
 
-### ASPE 验证结果 (Scheme 2)
+### ASPE 验证结果 (SkNN 风格)
 
-| 指标      | 明文 mAP | 密文 mAP | 误差      |
-| --------- | -------- | -------- | --------- |
-| mAP(i→t) | 0.7210   | 0.7199   | 1.09e-03  |
-| mAP(t→i) | 0.7575   | 0.7565   | 9.39e-04  |
+| 指标      | 明文 mAP | 密文 mAP | 误差          |
+| --------- | -------- | -------- | ------------- |
+| mAP(i→t) | 0.740915 | 0.740915 | **0.0** |
+| mAP(t→i) | 0.771607 | 0.771607 | **0.0** |
 
-**密文维度**: 160 (原 64 → 扩展 d'=80 → 拼接为 2×80)
-**安全级别**: 3 (抵抗已知明文攻击)
+**密文维度**: 128 (原 64 → 直接拼接为 2×64)
+**特性**: 密文内积 = 明文内积，mAP 完全一致
+
+### 排序一致性验证
+
+| 指标           | 值      |
+| -------------- | ------- |
+| Top-10 交集率  | 100%    |
+| Top-50 交集率  | 100%    |
+| Top-100 交集率 | 100%    |
+| 最大距离误差   | < 1e-12 |
+
+### 哈希码质量
+
+| 指标         | 值     |
+| ------------ | ------ |
+| 平衡性       | 0.9098 |
+| 唯一性       | 0.767  |
+| 平均汉明距离 | 0.4949 |
 
 ## 配置
 
@@ -639,22 +901,103 @@ data/
 
 ## 更新日志
 
+### 2026-03-26: 加密检索数据库修复
+
+**问题**：图像→标签检索时，加密模式使用了错误的数据库（加密的图像哈希码而非加密的文本哈希码），导致明文和密文检索结果不一致。
+
+**修复**：
+
+- `hash_cache_service.py`：新增 `encrypted_text_database` 属性和相关存取方法，分别存储图像和文本加密数据库
+- `aspe_service.py`：新增 `encrypt_text_database()` 方法专门加密文本哈希码，添加 `encrypted_text_database` 属性
+- `search.py`：根据检索类型选择正确的加密数据库
+  - 标签→图像检索：使用加密的**图像哈希码**数据库
+  - 图像→标签检索：使用加密的**文本哈希码**数据库
+
+**加密逻辑澄清**：
+
+- 加密**只需要哈希码本身**，不需要标签数据
+- LAll（类别标签）仅用于 mAP 评估，与加密无关
+- YAll（文本标签）用于生成文本哈希码和显示标签名称
+
+**缓存结构更新**：
+
+```
+backend/cache/dcmh/flickr25k/
+├── encrypted.npz          # 加密的图像哈希码（用于标签→图像检索）
+└── encrypted_text.npz     # 加密的文本哈希码（用于图像→标签检索）
+```
+
+### 2026-03-26: 排序一致性修复
+
+**问题**：明文和密文 mAP 计算使用了不同的排序策略，导致排序一致性验证失败。
+
+**修复**：
+
+- `evaluation/metrics.py`：`calc_map_k` 函数统一使用 `np.round(decimals=10) + np.lexsort`
+- `backend/app/routers/search.py`：Top-K 排序统一使用 `np.round + np.lexsort`
+- `backend/app/services/aspe_service.py`：`_compute_map_from_distances` 统一排序逻辑
+- `core/aspe/dcmh_wrapper.py`：新增 `verify_sorting_consistency()` 方法验证排序一致性
+
+**验证结果**：
+
+| 指标           | 值      |
+| -------------- | ------- |
+| Top-10 交集率  | 100%    |
+| Top-50 交集率  | 100%    |
+| Top-100 交集率 | 100%    |
+
+### 2026-03-26: 图像预处理修复
+
+**问题**：检索时的图像预处理减了两次均值（预处理函数 + 模型 forward），而训练时只减一次（仅 forward）。
+
+**修复**：
+
+- `backend/app/services/dcmh_service.py`：移除 `preprocess_image_for_inference` 中的预减均值逻辑
+- 预处理现在只做：RGB转换、resize、float32转换、HWC→CHW
+- 均值减法由模型 forward 统一处理
+
+**预处理流程对比**：
+
+| 步骤 | 训练时 | 检索时（修复后） |
+|------|--------|------------------|
+| 加载图像 | h5 直接加载 | PIL resize |
+| 预处理 | 无 | 无 |
+| forward | 减 mean | 减 mean |
+| 总减均值次数 | 1次 | 1次 |
+
+### 2026-03-26: README 重写
+
+**更新内容**：
+
+- 更新性能数据：mAP 从 ~0.54 更新为实际值 0.7409 / 0.7716
+- 新增"数据计算方式说明"章节：汉明距离、mAP、命中率计算公式
+- 新增 CIR 检索计算说明：特征提取、相似度计算、Revisited 协议 mAP
+- 新增"API 返回数据说明"章节：详细说明返回结构和字段含义
+- 更新数据存储结构：与实际目录一致，包含完整文件路径
+- 更新缓存结构：修正 DCMH 缓存（lall.npz, tags.npz）和 CIR 缓存文件列表
+- 更新项目结构：移除已删除的文件（scheme1.py, scheme2.py, benchmark.py, security.py）
+- 增强 ASPE 验证结果：新增排序一致性验证数据
+
 ### 2026-03-26: 图像预处理与颜色修复
 
 **问题 1：图像颜色异常**
+
 - 原因：`FLICKR-25K.mat` 中图像是 BGR 格式，已减去 VGG-F 均值
 - 修复：`_load_mat_image` 使用正确的 VGG-F 均值恢复和 BGR→RGB 转换
 
 **问题 2：图搜文检索效果差**
+
 - 原因：用户上传图片的预处理与训练数据不一致
 - 训练时：原始图像 → 减去 VGG-F 均值 → 存入 .mat → 模型 forward 再减均值
 - 用户上传：原始图像 → 直接传入模型 → 只减一次均值
 - 修复：`preprocess_image_for_inference` 添加 VGG-F 均值减法步骤
 
 **VGG-F 均值（BGR 格式）**：
+
 - B = 123.66, G = 116.77, R = 103.93
 
 **修改文件**：
+
 - `backend/app/services/dcmh_service.py`：修复预处理函数，添加均值减法
 - `backend/app/routers/images.py`：修复图像显示，使用正确均值和 BGR→RGB
 
@@ -665,21 +1008,23 @@ data/
 **清理内容**：
 
 1. **P0 未使用代码删除**：
+
    - `dcmh_service.py`：删除 `PRETRAIN_MODEL_PATH`、`DEFAULT_Y_DIM`、`preprocess_tag_vector()`、`generate_database_codes()`、`get_all_dcmh_services()`
    - `dataset_service.py`：删除 `get_all_dataset_services()`
    - `cir_service.py`：删除 `get_feature_dim()`
    - `search.py`：删除 `_generate_demo_query_code()`
-
 2. **P1 错误代码删除**：
+
    - `cir_retrieval.py`：删除调用不存在方法的端点 `build_index()`、`save_index()`、`load_index()`
    - 删除相关未使用的请求模型：`BuildIndexRequest`、`LoadIndexRequest`、`SaveIndexRequest`、`SknnBuildDatabaseRequest`
-
 3. **P2 兼容旧格式代码删除**：
+
    - `hash_cache_service.py`：删除 `save_cache()`、`load_cache()`、`save_encrypted_cache()`、`load_encrypted_cache()`、`build_database_cache()`、`get_cache_info_legacy()`
    - `hash_cache_service.py`：简化 `load_dcmh_tags()`，移除旧格式检测逻辑
    - `schemas/search.py`：删除 `HitStats` 中的兼容字段 `hits`、`hit_rate`、`query_tag_count`
 
 **API 更新**：
+
 - `datasets.py` 和 `encrypt.py` 改用 `build_full_database_cache()` 替代已删除的 `build_database_cache()`
 
 ### 2026-03-26: DCMH 检索数据混淆修复
@@ -687,15 +1032,18 @@ data/
 **问题**：`aspe_service.database_labels` 存储的是 YAll（1386维标签向量）而非 LAll（24维类别标签），导致 mAP 计算使用错误的数据。
 
 **修复**：
+
 - `search.py`：`ensure_cache_initialized` 函数现在正确加载 LAll 赋值给 `aspe_service.database_labels`
 - `hash_cache_service.py`：`build_encrypted_cache` 方法现在使用 LAll 进行加密
 - `hash_cache_service.py`：新增 `load_dcmh_yall` 方法，返回 YAll 数据（`load_full_database` 作为兼容别名保留）
 
 **数据命名规范**：
+
 - `YAll (tags)`：标签向量（1386维）- 用于生成文本哈希码、检索结果显示标签名称
 - `LAll (labels)`：类别标签向量（24维）- 用于计算 mAP
 
 **数据流**：
+
 ```
 hash_cache.load_dcmh_yall() → YAll
 hash_cache.load_dcmh_lall() → LAll

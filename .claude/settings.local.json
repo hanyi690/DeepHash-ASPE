@@ -99,7 +99,8 @@
       "Bash(cmd //c \"taskkill /F /PID 35592\")",
       "Bash(cmd //c \"taskkill /F /PID 28472\")",
       "Bash(cat:*)",
-      "WebFetch(domain:zhuanlan.zhihu.com)"
+      "WebFetch(domain:zhuanlan.zhihu.com)",
+      "mcp__filesystem__write_file"
     ]
   },
   "skipWebFetchPreflight": true

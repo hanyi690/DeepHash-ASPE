@@ -90,7 +90,8 @@ class HashCacheService:
         self.database_codes: Optional[np.ndarray] = None
         self.database_text_codes: Optional[np.ndarray] = None  # 文本哈希码
         self.database_tags: Optional[np.ndarray] = None
-        self.encrypted_database: Optional[np.ndarray] = None
+        self.encrypted_database: Optional[np.ndarray] = None  # 加密的图像哈希码（用于标签→图像检索）
+        self.encrypted_text_database: Optional[np.ndarray] = None  # 加密的文本哈希码（用于图像→标签检索）
         self.query_codes: Optional[np.ndarray] = None
         self.query_tags: Optional[np.ndarray] = None
 
@@ -210,14 +211,30 @@ class HashCacheService:
         return None
 
     def save_dcmh_encrypted(self, encrypted_database: np.ndarray, dataset: str = "flickr25k"):
-        """保存 DCMH 加密数据库缓存。"""
+        """保存 DCMH 加密数据库缓存（图像哈希码，用于标签→图像检索）。"""
         cache_path = self.get_dcmh_cache_path(dataset, "encrypted")
         np.savez(cache_path, encrypted=encrypted_database)
-        logger.info(f"[HashCacheService] 已保存 DCMH 加密缓存：{cache_path}")
+        logger.info(f"[HashCacheService] 已保存 DCMH 加密图像哈希码缓存：{cache_path}")
 
     def load_dcmh_encrypted(self, dataset: str = "flickr25k") -> Optional[np.ndarray]:
-        """加载 DCMH 加密数据库缓存。"""
+        """加载 DCMH 加密数据库缓存（图像哈希码，用于标签→图像检索）。"""
         cache_path = self.get_dcmh_cache_path(dataset, "encrypted")
+
+        if not cache_path.exists():
+            return None
+
+        data = np.load(cache_path)
+        return data.get('encrypted')
+
+    def save_dcmh_encrypted_text(self, encrypted_text_database: np.ndarray, dataset: str = "flickr25k"):
+        """保存 DCMH 加密文本哈希码缓存（用于图像→标签检索）。"""
+        cache_path = self.get_dcmh_cache_path(dataset, "encrypted_text")
+        np.savez(cache_path, encrypted=encrypted_text_database)
+        logger.info(f"[HashCacheService] 已保存 DCMH 加密文本哈希码缓存：{cache_path}")
+
+    def load_dcmh_encrypted_text(self, dataset: str = "flickr25k") -> Optional[np.ndarray]:
+        """加载 DCMH 加密文本哈希码缓存（用于图像→标签检索）。"""
+        cache_path = self.get_dcmh_cache_path(dataset, "encrypted_text")
 
         if not cache_path.exists():
             return None
@@ -598,9 +615,13 @@ class HashCacheService:
     def build_encrypted_cache(self,
                              aspe_service,
                              force_rebuild: bool = False,
-                             dataset: str = None) -> np.ndarray:
+                             dataset: str = None) -> Tuple[np.ndarray, np.ndarray]:
         """
         构建加密数据库缓存。
+
+        同时加密图像和文本哈希码数据库：
+        - 图像哈希码数据库：用于标签→图像检索
+        - 文本哈希码数据库：用于图像→标签检索
 
         参数：
             aspe_service: ASPE 服务实例
@@ -608,23 +629,28 @@ class HashCacheService:
             dataset: 数据集名称（可选，默认使用当前数据集）
 
         返回：
-            加密的数据库
+            (加密图像数据库, 加密文本数据库)
         """
         # 确定数据集名称
         if dataset is None:
             dataset = self._current_dataset or 'flickr25k'
 
-        # 检查新格式缓存
+        # 检查缓存
         if not force_rebuild:
-            encrypted = self.load_dcmh_encrypted(dataset)
-            if encrypted is not None:
-                self.encrypted_database = encrypted
-                aspe_service.encrypted_database = encrypted
-                return encrypted
+            encrypted_image = self.load_dcmh_encrypted(dataset)
+            encrypted_text = self.load_dcmh_encrypted_text(dataset)
+            if encrypted_image is not None and encrypted_text is not None:
+                self.encrypted_database = encrypted_image
+                self.encrypted_text_database = encrypted_text
+                aspe_service.encrypted_database = encrypted_image
+                aspe_service.encrypted_text_database = encrypted_text
+                return encrypted_image, encrypted_text
 
         # 检查明文数据库
         if self.database_codes is None:
-            raise ValueError("请先构建数据库哈希码缓存")
+            raise ValueError("请先构建数据库图像哈希码缓存")
+        if self.database_text_codes is None:
+            raise ValueError("请先构建数据库文本哈希码缓存")
 
         # 加载 LAll 类别标签（用于 mAP 计算）
         lall = self.load_dcmh_lall(dataset)
@@ -638,17 +664,28 @@ class HashCacheService:
                 f"请确保 {dataset} 数据集的 LAll 数据已正确保存。"
             )
 
-        encrypted = aspe_service.encrypt_database(
+        # 加密图像哈希码数据库（用于标签→图像检索）
+        encrypted_image = aspe_service.encrypt_database(
             self.database_codes, lall
         )
 
-        # 保存缓存（新格式）
-        self.save_dcmh_encrypted(encrypted, dataset)
+        # 加密文本哈希码数据库（用于图像→标签检索）
+        encrypted_text = aspe_service.encrypt_database(
+            self.database_text_codes, lall
+        )
 
-        self.encrypted_database = encrypted
-        logger.info(f"[HashCacheService] 数据库加密完成：{encrypted.shape}")
+        # 保存缓存
+        self.save_dcmh_encrypted(encrypted_image, dataset)
+        self.save_dcmh_encrypted_text(encrypted_text, dataset)
 
-        return encrypted
+        self.encrypted_database = encrypted_image
+        self.encrypted_text_database = encrypted_text
+        aspe_service.encrypted_database = encrypted_image
+        aspe_service.encrypted_text_database = encrypted_text
+
+        logger.info(f"[HashCacheService] 数据库加密完成：图像 {encrypted_image.shape}, 文本 {encrypted_text.shape}")
+
+        return encrypted_image, encrypted_text
 
     def clear_cache(self):
         """清除所有缓存。"""

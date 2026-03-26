@@ -26,7 +26,7 @@ from core.hashing.dcmh_image import DCMHImageModule
 from core.hashing.dcmh_text import DCMHTextModule
 
 # 导入数据集配置
-from app.services.dataset_service import get_y_dim_for_dataset, DATASET_CONFIGS
+from backend.app.services.dataset_service import get_y_dim_for_dataset, DATASET_CONFIGS
 
 logger = logging.getLogger(__name__)
 
@@ -48,10 +48,9 @@ def preprocess_image_for_inference(image: Image.Image,
     2. 调整大小到 224x224
     3. 转换为 float32 数组 [0, 255]
     4. HWC -> CHW
-    5. 减去 VGG-F 均值（BGR 格式）
 
-    注意：模型 forward 会再次减均值，这里预减均值是为了与训练数据一致。
-    训练数据在 MATLAB 中已经减过一次均值，所以用户上传的图片也需要预减均值。
+    注意：不减均值！模型的 forward 会在内部减去 VGG-F mean，
+    这与训练时的处理一致（训练数据直接从 h5 加载，forward 中减均值）。
 
     参数：
         image: PIL 图像对象
@@ -72,12 +71,8 @@ def preprocess_image_for_inference(image: Image.Image,
     # 4. HWC -> CHW
     img_np = img_np.transpose(2, 0, 1)
 
-    # 5. 减去 VGG-F 均值（BGR 格式）
-    # VGG-F 均值：B=123.66, G=116.77, R=103.93
-    # 注意：.mat 文件中图像是 BGR 格式，所以用 BGR 均值
-    # 这样用户上传图片与训练数据的预处理一致
-    vggf_mean = np.array([123.66, 116.77, 103.93], dtype=np.float32).reshape(3, 1, 1)
-    img_np = img_np - vggf_mean
+    # 不在这里减均值！让模型的 forward 自己减
+    # 这与训练时的处理一致
 
     return torch.from_numpy(img_np)
 

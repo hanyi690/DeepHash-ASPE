@@ -1,29 +1,30 @@
 """
-ASPE 包装器：用于 DCMH 深度哈希跨模态检索
+DCMH 哈希码加密包装器
 
-提供与 DCMH 代码风格一致的接口，支持：
-- 哈希码加密（GenEnc/GenTrap）
-- 密文汉明距离计算
-- 密文 mAP 评估
+基于 SIGMOD'09 论文实现 ASPE 算法（SkNN 风格），密文内积 = 明文内积。
+参考：https://blog.csdn.net/qq_36458536/article/details/128367624
+
+核心原理：
+- GenEnc（检索库加密）：S[i]=0 复制，S[i]=1 随机拆分
+- GenTrap（查询加密）：S[i]=1 复制，S[i]=0 固定 r=0 拆分
+- 密文内积 = v1·w1 + v2·w2 = v·w（明文内积）
 """
 
 import numpy as np
 import torch
-from typing import Optional
-from .scheme1 import ASPEScheme1
+from typing import Optional, Tuple
 
 
 class ASPEForDCMH:
     """
     ASPE 加密与 DCMH 哈希码的接口类。
 
-    将 DCMH 生成的 {-1, +1} 哈希码转换为 ASPE 可处理的形式，
-    并在密文空间计算汉明距离和 mAP 指标。
+    将 DCMH 生成的 {-1, +1} 哈希码加密，密文内积 = 明文内积。
 
     核心洞察：
     1. 汉明距离与内积的线性关系：hamm(B1, B2) = 0.5 × (bit - B1·B2)
-    2. ASPE 内积保持性：EncDB(p)·EncQuery(q) = r × (p·q)，其中 r > 0
-    3. 排序不变性：汉明距离排序 → 内积排序 → ASPE 密文内积排序
+    2. ASPE 内积保持性：密文内积 = 明文内积
+    3. 排序不变性：汉明距离排序 = 密文内积排序
     """
 
     def __init__(self, bit_dim: int, seed: int = 42):
@@ -32,84 +33,133 @@ class ASPEForDCMH:
 
         参数：
             bit_dim: 哈希码位数（如 16, 32, 64）
-            seed: ASPE 密钥生成的随机种子
+            seed: 随机种子
         """
         self.bit = bit_dim
-        self.aspe = ASPEScheme1(d=bit_dim, seed=seed)
+        self.seed = seed
 
-    def GenEnc(self, retrieval_codes: np.ndarray) -> np.ndarray:
+        # 生成密钥 M1, M2, S
+        np.random.seed(seed)
+        d = bit_dim
+
+        # 生成可逆矩阵 M1, M2
+        self.M1 = np.random.randn(d, d)
+        self.M2 = np.random.randn(d, d)
+
+        # 确保矩阵可逆
+        while np.abs(np.linalg.det(self.M1)) < 1e-10:
+            self.M1 = np.random.randn(d, d)
+        while np.abs(np.linalg.det(self.M2)) < 1e-10:
+            self.M2 = np.random.randn(d, d)
+
+        # 生成二元拆分向量 S
+        self.S = np.random.randint(0, 2, d)
+
+        # 预计算逆矩阵
+        self.M1_inv = np.linalg.inv(self.M1)
+        self.M2_inv = np.linalg.inv(self.M2)
+
+    def GenEnc(self, codes: np.ndarray) -> np.ndarray:
         """
         加密检索库哈希码。
 
-        将 DCMH 生成的 {-1, +1} 哈希码加密为 ASPE 密文。
+        规则：
+        - S[i]=0: 复制 v1[i] = v2[i] = v[i]
+        - S[i]=1: 随机拆分 v1[i] + v2[i] = v[i]
 
         参数：
-            retrieval_codes: {-1, +1}^{n×bit} 检索库哈希码（numpy 数组）
+            codes: {-1, +1}^{N×bit} 检索库哈希码
 
         返回：
-            {n×(bit+1)} 加密检索库
+            {N×(2×bit)} 加密检索库（两个份额水平拼接）
         """
-        if isinstance(retrieval_codes, torch.Tensor):
-            retrieval_codes = retrieval_codes.cpu().numpy()
+        if isinstance(codes, torch.Tensor):
+            codes = codes.cpu().numpy()
 
-        # 确保是浮点类型（ASPE 需要）
-        retrieval_float = retrieval_codes.astype(np.float64)
+        codes = codes.astype(np.float64)
+        N, d = codes.shape
 
-        # 使用 ASPE 加密
-        return self.aspe.GenEnc(retrieval_float)
+        # 随机拆分值
+        r = np.random.randn(N, d)
 
-    def GenTrap(self, query_codes: np.ndarray, r: Optional[float] = None) -> np.ndarray:
+        # S=0 复制，S=1 随机拆分
+        # v1 = where(S=1, r, v)
+        # v2 = where(S=1, v-r, v)
+        v1 = np.where(self.S == 1, r, codes)
+        v2 = np.where(self.S == 1, codes - r, codes)
+
+        # 矩阵变换：M^T @ v
+        enc1 = v1 @ self.M1.T
+        enc2 = v2 @ self.M2.T
+
+        return np.hstack([enc1, enc2])
+
+    def GenTrap(self, codes: np.ndarray) -> np.ndarray:
         """
         加密查询哈希码（生成陷阱门）。
 
+        规则：
+        - S[i]=1: 复制 w1[i] = w2[i] = w[i]
+        - S[i]=0: 固定 r=0 拆分 w1[i] = 0, w2[i] = w[i]（数值稳定）
+
         参数：
-            query_codes: {-1, +1}^{m×bit} 查询哈希码
-            r: 可选的缩放因子（如果为 None，则使用固定值 1.0）
+            codes: {-1, +1}^{M×bit} 查询哈希码
 
         返回：
-            {m×(bit+1)} 加密查询（陷阱门）
+            {M×(2×bit)} 加密查询（陷阱门，两个份额水平拼接）
         """
-        if isinstance(query_codes, torch.Tensor):
-            query_codes = query_codes.cpu().numpy()
+        if isinstance(codes, torch.Tensor):
+            codes = codes.cpu().numpy()
 
-        query_float = query_codes.astype(np.float64)
-        return self.aspe.GenTrap(query_float, r)
+        codes = codes.astype(np.float64)
+        N, d = codes.shape
 
-    def ciphertext_hamming_distance(self, encrypted_q: np.ndarray,
+        # S=1 复制，S=0 固定 r=0 拆分
+        # w1 = where(S=0, 0, w)
+        # w2 = where(S=0, w, w) = w
+        w1 = np.where(self.S == 0, 0.0, codes)
+        w2 = codes.copy()
+
+        # 逆矩阵变换：w @ M^(-1)（不是 M^(-1).T）
+        trap1 = w1 @ self.M1_inv
+        trap2 = w2 @ self.M2_inv
+
+        return np.hstack([trap1, trap2])
+
+    def ciphertext_hamming_distance(self,
+                                    encrypted_q: np.ndarray,
                                     encrypted_r: np.ndarray) -> np.ndarray:
         """
-        使用 ASPE 密文内积计算等效汉明距离。
+        计算密文汉明距离。
 
-        原理：
-        对于 ASPE 方案 1 和 {-1, +1} 哈希码：
-        - 密文内积：cipher_ip = p·q - 0.5×bit
-        - 汉明距离：hamm = 0.5×(bit - p·q)
-        - 因此：hamm = 0.25×bit - 0.5×cipher_ip
+        密文内积 = 明文内积，汉明距离 = 0.5 × (bit - 内积)
 
         参数：
-            encrypted_q: 加密查询（单个或多个）
-            encrypted_r: 加密检索库
+            encrypted_q: 加密查询 [M, 2×bit] 或 [2×bit]
+            encrypted_r: 加密检索库 [N, 2×bit]
 
         返回：
-            汉明距离数组
+            汉明距离数组 [M, N]
         """
         if isinstance(encrypted_q, torch.Tensor):
             encrypted_q = encrypted_q.cpu().numpy()
         if isinstance(encrypted_r, torch.Tensor):
             encrypted_r = encrypted_r.cpu().numpy()
 
-        # 确保是 2D 数组
         if encrypted_q.ndim == 1:
             encrypted_q = encrypted_q.reshape(1, -1)
 
-        # 计算密文内积矩阵 [num_query, num_retrieval]
-        inner_products = np.dot(encrypted_q, encrypted_r.T)
+        d = self.bit
+        q1, q2 = encrypted_q[:, :d], encrypted_q[:, d:]
+        r1, r2 = encrypted_r[:, :d], encrypted_r[:, d:]
 
-        # 转换回汉明距离
-        # 对于 {-1, +1} 哈希码：hamm = 0.25×bit - 0.5×cipher_ip
-        hamm = 0.25 * self.bit - 0.5 * inner_products
+        # 密文内积 = 明文内积
+        inner_products = q1 @ r1.T + q2 @ r2.T
 
-        return hamm
+        # 汉明距离 = 0.5 × (bit - 内积)
+        hamm = 0.5 * (self.bit - inner_products)
+
+        return np.clip(hamm, 0, self.bit)
 
     def calc_ciphertext_map(self,
                            encrypted_qB: np.ndarray,
@@ -123,8 +173,8 @@ class ASPEForDCMH:
         这是 DCMH utils.calc_map_k 的加密版本。
 
         参数：
-            encrypted_qB: 加密查询哈希码 [num_query, bit+1]
-            encrypted_rB: 加密检索库哈希码 [num_retrieval, bit+1]
+            encrypted_qB: 加密查询哈希码 [num_query, 2×bit]
+            encrypted_rB: 加密检索库哈希码 [num_retrieval, 2×bit]
             query_L: 查询标签 {0,1}^{num_query×num_labels}
             retrieval_L: 检索库标签 {0,1}^{num_retrieval×num_labels}
             k: 可选的截断位置（默认使用全部检索库）
@@ -149,7 +199,7 @@ class ASPEForDCMH:
             k = encrypted_rB.shape[0]
 
         for iter_idx in range(num_query):
-            q_L = query_L[iter_idx:iter_idx+1]  # 保持 2D
+            q_L = query_L[iter_idx:iter_idx+1]
 
             # 计算相关性（与 DCMH 一致）
             gnd = (q_L @ retrieval_L.T > 0).squeeze().astype(np.float32)
@@ -164,7 +214,10 @@ class ASPEForDCMH:
             hamm = hamm.squeeze()
 
             # 按距离排序（升序：距离越小越相似）
-            ind = np.argsort(hamm)
+            # 四舍五入消除浮点误差，确保相同距离的值排序一致
+            hamm_rounded = np.round(hamm, decimals=10)
+            # 使用 lexsort 保证确定性：先按距离，再按索引
+            ind = np.lexsort((np.arange(len(hamm_rounded)), hamm_rounded))
 
             # 重排相关性标签
             gnd_sorted = gnd[ind]
@@ -180,125 +233,228 @@ class ASPEForDCMH:
         map_score /= num_query
         return map_score
 
-    def verify_sorting_consistency(self,
-                                   qB: np.ndarray,
-                                   rB: np.ndarray,
-                                   num_samples: int = 10) -> bool:
+    def get_key_info(self) -> dict:
         """
-        验证 ASPE 加密前后排序顺序一致。
-
-        由于相同汉明距离的项可能有不同排序顺序（不影响 mAP），
-        我们验证前 K 个结果的交集比例。
-
-        参数：
-            qB: 原始查询哈希码
-            rB: 原始检索库哈希码
-            num_samples: 采样查询数量
+        获取密钥信息（用于调试和验证）。
 
         返回：
-            如果排序一致返回 True
+            包含密钥信息的字典
         """
-        if isinstance(qB, torch.Tensor):
-            qB = qB.cpu().numpy()
-        if isinstance(rB, torch.Tensor):
-            rB = rB.cpu().numpy()
+        return {
+            'bit': self.bit,
+            'seed': self.seed,
+            'M1_shape': self.M1.shape,
+            'M2_shape': self.M2.shape,
+            'S_shape': self.S.shape
+        }
+
+    def verify_inner_product_preservation(self,
+                                          codes: np.ndarray,
+                                          num_samples: int = 5) -> dict:
+        """
+        验证密文内积 = 明文内积。
+
+        参数：
+            codes: 哈希码数组
+            num_samples: 采样数量
+
+        返回：
+            包含验证结果的字典
+        """
+        if isinstance(codes, torch.Tensor):
+            codes = codes.cpu().numpy()
+
+        codes = codes.astype(np.float64)
+        n = min(num_samples, len(codes))
+
+        encrypted = self.GenEnc(codes[:n])
+
+        results = {
+            'preserved': True,
+            'max_error': 0.0,
+            'details': []
+        }
+
+        d = self.bit
+        for i in range(n):
+            for j in range(n):
+                # 明文内积
+                plain_ip = np.dot(codes[i], codes[j])
+
+                # 密文内积
+                e1, e2 = encrypted[i, :d], encrypted[i, d:]
+                f1, f2 = encrypted[j, :d], encrypted[j, d:]
+                cipher_ip = np.dot(e1, f1) + np.dot(e2, f2)
+
+                error = abs(plain_ip - cipher_ip)
+                results['max_error'] = max(results['max_error'], error)
+
+                if error > 1e-6:
+                    results['preserved'] = False
+
+                results['details'].append({
+                    'i': i, 'j': j,
+                    'plain_ip': plain_ip,
+                    'cipher_ip': cipher_ip,
+                    'error': error
+                })
+
+        return results
+
+    def verify_sorting_consistency(self,
+                                   query_codes: np.ndarray,
+                                   retrieval_codes: np.ndarray,
+                                   top_k: list = [10, 50, 100],
+                                   thresholds: list = [0.90, 0.85, 0.80]) -> dict:
+        """
+        验证明文和密文排序一致性。
+
+        参数：
+            query_codes: 查询哈希码 {-1, +1}^{M×bit}
+            retrieval_codes: 检索库哈希码 {-1, +1}^{N×bit}
+            top_k: 要验证的前K个结果列表
+            thresholds: 每个K值对应的阈值（交集比例）
+
+        返回：
+            包含验证结果的字典：
+            - passed: 是否通过所有验证
+            - details: 每个查询的详细结果
+            - overlap_ratios: 各K值的平均交集比例
+        """
+        if isinstance(query_codes, torch.Tensor):
+            query_codes = query_codes.cpu().numpy()
+        if isinstance(retrieval_codes, torch.Tensor):
+            retrieval_codes = retrieval_codes.cpu().numpy()
+
+        query_codes = query_codes.astype(np.float64)
+        retrieval_codes = retrieval_codes.astype(np.float64)
 
         # 加密
-        encrypted_rB = self.GenEnc(rB)
-        encrypted_qB = self.GenTrap(qB[:num_samples])
+        encrypted_q = self.GenTrap(query_codes)
+        encrypted_r = self.GenEnc(retrieval_codes)
 
-        # 验证前 K 个结果的交集比例
-        k_values = [10, 50, 100]
-        min_overlap_ratios = {10: 0.9, 50: 0.85, 100: 0.80}
+        # 计算明文汉明距离
+        plain_inner = query_codes @ retrieval_codes.T
+        plain_hamm = 0.5 * (self.bit - plain_inner)
 
-        all_consistent = True
-        for i in range(min(num_samples, len(qB))):
-            # 原始汉明距离
-            q = qB[i:i+1].astype(np.float64)
-            inner_prod_orig = np.dot(q, rB.T)
-            hamm_orig = 0.5 * (self.bit - inner_prod_orig)
-            rank_orig = np.argsort(hamm_orig.squeeze())
+        # 计算密文汉明距离
+        cipher_hamm = self.ciphertext_hamming_distance(encrypted_q, encrypted_r)
 
-            # ASPE 汉明距离
-            q_enc = encrypted_qB[i:i+1]
-            hamm_aspe = self.ciphertext_hamming_distance(q_enc, encrypted_rB)
-            rank_aspe = np.argsort(hamm_aspe.squeeze())
+        # 初始化结果
+        results = {
+            'passed': True,
+            'overlap_ratios': {k: [] for k in top_k},
+            'distance_errors': [],
+            'details': []
+        }
 
-            # 检查各 K 值的交集比例
-            for k in k_values:
-                if k > len(rB):
-                    continue
-                set_orig = set(rank_orig[:k])
-                set_aspe = set(rank_aspe[:k])
-                overlap = len(set_orig & set_aspe) / k
+        num_queries = len(query_codes)
 
-                if overlap < min_overlap_ratios[k]:
-                    all_consistent = False
+        for i in range(num_queries):
+            # 明文排序（使用与密文一致的排序逻辑）
+            plain_h = plain_hamm[i]
+            plain_rounded = np.round(plain_h, decimals=10)
+            plain_ind = np.lexsort((np.arange(len(plain_rounded)), plain_rounded))
 
-        return bool(all_consistent)
+            # 密文排序
+            cipher_h = cipher_hamm[i]
+            cipher_rounded = np.round(cipher_h, decimals=10)
+            cipher_ind = np.lexsort((np.arange(len(cipher_rounded)), cipher_rounded))
+
+            # 计算距离误差
+            dist_error = np.abs(plain_h - cipher_h).max()
+            results['distance_errors'].append(dist_error)
+
+            # 计算各K值的交集比例
+            detail = {'query_idx': i, 'overlaps': {}}
+            for k, threshold in zip(top_k, thresholds):
+                plain_top_k = set(plain_ind[:k])
+                cipher_top_k = set(cipher_ind[:k])
+                overlap = len(plain_top_k & cipher_top_k) / k
+                results['overlap_ratios'][k].append(overlap)
+                detail['overlaps'][k] = overlap
+
+                if overlap < threshold:
+                    results['passed'] = False
+
+            results['details'].append(detail)
+
+        # 计算平均交集比例
+        for k in top_k:
+            results['overlap_ratios'][f'{k}_mean'] = np.mean(results['overlap_ratios'][k])
+
+        return results
 
 
-# 便捷函数：与 DCMH main.py 风格一致
-def generate_encrypted_codes(model, data, bit_dim, aspe_wrapper):
-    """
-    生成加密哈希码（DCMH generate_*_code 的加密版本）。
+if __name__ == "__main__":
+    # 测试 ASPE for DCMH
+    print("测试 ASPE for DCMH (SkNN 风格)")
+    print("=" * 60)
 
-    参数：
-        model: DCMH 模型（ImgModule 或 TxtModule）
-        data: 输入数据
-        bit_dim: 哈希位数
-        aspe_wrapper: ASPEForDCMH 实例
+    # 初始化
+    bit = 64
+    aspe = ASPEForDCMH(bit_dim=bit)
 
-    返回：
-        加密哈希码
-    """
-    # 生成原始哈希码
-    B = generate_codes(model, data, bit_dim)
+    print(f"哈希码位数: {bit}")
+    print(f"密文维度: {2 * bit}")
+    print(f"密钥信息: {aspe.get_key_info()}")
+
+    # 生成测试哈希码
+    n_retrieval = 100
+    n_query = 10
+
+    np.random.seed(42)
+    retrieval_codes = np.random.choice([-1, 1], size=(n_retrieval, bit))
+    query_codes = np.random.choice([-1, 1], size=(n_query, bit))
 
     # 加密
-    return aspe_wrapper.GenEnc(B)
+    print("\n加密检索库...")
+    encrypted_rB = aspe.GenEnc(retrieval_codes)
+    print(f"加密后形状: {encrypted_rB.shape}")
 
+    print("加密查询...")
+    encrypted_qB = aspe.GenTrap(query_codes)
+    print(f"加密后形状: {encrypted_qB.shape}")
 
-def generate_codes(model, Y, bit):
-    """
-    生成哈希码（参考 DCMH 的 generate_image_code / generate_text_code）。
+    # 验证内积保持性
+    print("\n验证内积保持性...")
+    verification = aspe.verify_inner_product_preservation(retrieval_codes)
+    print(f"内积保持: {'是' if verification['preserved'] else '否'}")
+    print(f"最大误差: {verification['max_error']:.2e}")
 
-    这是一个简化版本，实际使用时应传入正确的数据处理器。
-    """
-    # 这里假设模型可以直接处理输入并输出哈希码
-    # 实际使用时需要根据具体模型调整
-    import torch
-    from tqdm import tqdm
+    # 计算密文汉明距离
+    print("\n计算密文汉明距离...")
+    hamm = aspe.ciphertext_hamming_distance(encrypted_qB[:1], encrypted_rB)
+    print(f"距离形状: {hamm.shape}")
+    print(f"最小距离: {hamm.min():.4f}")
+    print(f"最大距离: {hamm.max():.4f}")
 
-    batch_size = 64  # 默认 batch size
-    num_data = Y.shape[0]
-    index = np.linspace(0, num_data - 1, num_data).astype(int)
-    B = torch.zeros(num_data, bit, dtype=torch.float)
+    # 验证排序一致性
+    print("\n验证排序一致性...")
+    consistent = aspe.verify_sorting_consistency(query_codes, retrieval_codes)
+    print(f"排序一致性: {'通过' if consistent else '失败'}")
 
-    use_gpu = torch.cuda.is_available()
-    if use_gpu:
-        B = B.cuda()
-        model = model.cuda()
+    # 对比明文和密文距离
+    print("\n对比明文和密文距离...")
+    for i in range(min(3, n_query)):
+        q = query_codes[i:i+1].astype(np.float64)
+        plain_ip = np.dot(q, retrieval_codes.T)
+        plain_hamm = 0.5 * (bit - plain_ip).squeeze()
 
-    with torch.no_grad():
-        for i in tqdm(range(num_data // batch_size + 1)):
-            ind = index[i * batch_size: min((i + 1) * batch_size, num_data)]
+        cipher_hamm = aspe.ciphertext_hamming_distance(
+            encrypted_qB[i:i+1], encrypted_rB
+        ).squeeze()
 
-            # 处理输入
-            if isinstance(Y, torch.Tensor):
-                data = Y[ind].type(torch.float)
-            else:
-                data = torch.from_numpy(Y[ind]).type(torch.float)
+        # 计算距离误差
+        error = np.abs(plain_hamm - cipher_hamm).max()
 
-            # 文本数据需要额外的维度
-            if data.dim() == 2:
-                data = data.unsqueeze(1).unsqueeze(-1)
+        # 计算排序相关性
+        rank_plain = np.argsort(plain_hamm)
+        rank_cipher = np.argsort(cipher_hamm)
 
-            if use_gpu:
-                data = data.cuda()
+        # 计算前 10 的交集
+        overlap = len(set(rank_plain[:10]) & set(rank_cipher[:10])) / 10
 
-            cur_f = model(data)
-            B[ind, :] = cur_f.data
+        print(f"  查询 {i+1}: 最大距离误差 = {error:.2e}, 前 10 交集比例 = {overlap:.2f}")
 
-    B = torch.sign(B)
-    return B
+    print("\n测试完成!")

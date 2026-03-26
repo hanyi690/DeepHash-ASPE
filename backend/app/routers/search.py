@@ -70,29 +70,37 @@ async def ensure_cache_initialized(dataset: str = "flickr25k"):
             hash_cache.database_text_codes = text_codes
             hash_cache.database_tags = yall  # YAll 用于检索结果显示
 
-            # 加载 LAll 类别标签（用于 mAP 计算）
+            # 加载 LAll 类别标签（用于 mAP 计算，与加密无关）
             lall = hash_cache.load_dcmh_lall(dataset)
 
-            # 加密数据库（传递 LAll 给 aspe_service）
-            if hash_cache.dcmh_cache_exists(dataset, "encrypted"):
-                encrypted = hash_cache.load_dcmh_encrypted(dataset)
-                if encrypted is not None:
-                    hash_cache.encrypted_database = encrypted
-                    aspe_service.encrypted_database = encrypted
-                    aspe_service.database_codes = image_codes
-                    aspe_service.database_labels = lall  # LAll
+            # 检查是否已有加密缓存
+            encrypted_image = hash_cache.load_dcmh_encrypted(dataset)
+            encrypted_text = hash_cache.load_dcmh_encrypted_text(dataset)
+
+            if encrypted_image is not None:
+                hash_cache.encrypted_database = encrypted_image
+                aspe_service.encrypted_database = encrypted_image
             else:
-                # 注意：encrypt_database 的第二个参数应该是 LAll
-                if lall is None:
-                    raise ValueError(
-                        f"LAll 类别标签未找到 ({dataset})。"
-                        f"无法加密数据库 - mAP 计算需要 LAll（类别标签），而非 YAll（文本标签）。"
-                    )
-                encrypted = aspe_service.encrypt_database(image_codes, lall)
-                hash_cache.encrypted_database = encrypted
+                # 加密图像哈希码（用于标签→图像检索）
+                # 只需要哈希码本身，LAll 仅用于 mAP 计算
+                encrypted_image = aspe_service.encrypt_database(image_codes, lall)
+                hash_cache.encrypted_database = encrypted_image
+                hash_cache.save_dcmh_encrypted(encrypted_image, dataset)
+
+            if encrypted_text is not None:
+                hash_cache.encrypted_text_database = encrypted_text
+                aspe_service.encrypted_text_database = encrypted_text
+            else:
+                # 加密文本哈希码（用于图像→标签检索）
+                # 只需要哈希码本身，不需要标签
+                encrypted_text = aspe_service.encrypt_text_database(text_codes)
+                hash_cache.encrypted_text_database = encrypted_text
+                aspe_service.encrypted_text_database = encrypted_text
+                hash_cache.save_dcmh_encrypted_text(encrypted_text, dataset)
 
             aspe_service.database_codes = image_codes
-            aspe_service.database_labels = lall  # LAll 用于 mAP 计算
+            if lall is not None:
+                aspe_service.database_labels = lall  # LAll 用于 mAP 计算
 
             logger.info(f"[DCMH] 缓存已加载 ({dataset})：图像 {image_codes.shape[0]} 条，"
                        f"文本 {text_codes.shape[0] if text_codes is not None else 0} 条")
@@ -249,13 +257,37 @@ async def search(request: SearchRequest):
             bit_dim=dcmh_service.bit_dim
         )
 
-        if request.use_encrypted and aspe_service.encrypted_database is not None:
+        if request.use_encrypted:
             # ASPE 加密检索
             encrypted_query = aspe_service.generate_trapdoor(query_code_np.reshape(1, -1))
-            distances = aspe_service.compute_ciphertext_distances(encrypted_query)
 
-            encryption_info.query_encrypted = True
-            encryption_info.database_encrypted = True
+            # 根据查询类型选择正确的加密数据库
+            if request.query_type == "image_to_tag":
+                # 图像→标签：使用加密的文本哈希码数据库
+                if aspe_service.encrypted_text_database is not None:
+                    distances = aspe_service.compute_ciphertext_distances(
+                        encrypted_query, aspe_service.encrypted_text_database
+                    )
+                    encryption_info.query_encrypted = True
+                    encryption_info.database_encrypted = True
+                else:
+                    # 回退到明文检索
+                    logger.warning("[搜索] 加密文本数据库未初始化，回退到明文检索")
+                    distances = aspe_service._plaintext_hamming_distance(
+                        query_code_np.reshape(1, -1), database_codes
+                    )
+            else:
+                # 标签→图像：使用加密的图像哈希码数据库
+                if aspe_service.encrypted_database is not None:
+                    distances = aspe_service.compute_ciphertext_distances(encrypted_query)
+                    encryption_info.query_encrypted = True
+                    encryption_info.database_encrypted = True
+                else:
+                    # 回退到明文检索
+                    logger.warning("[搜索] 加密图像数据库未初始化，回退到明文检索")
+                    distances = aspe_service._plaintext_hamming_distance(
+                        query_code_np.reshape(1, -1), database_codes
+                    )
 
         else:
             # 明文检索
@@ -265,7 +297,10 @@ async def search(request: SearchRequest):
 
         # 获取Top-K结果
         distances_flat = distances.squeeze()
-        top_k_indices = np.argsort(distances_flat)[:request.top_k]
+        # 使用统一的排序逻辑：四舍五入 + lexsort 确保相同距离时的确定性排序
+        distances_rounded = np.round(distances_flat, decimals=10)
+        sorted_indices = np.lexsort((np.arange(len(distances_rounded)), distances_rounded))
+        top_k_indices = sorted_indices[:request.top_k]
 
         # 获取数据库索引
         dataset_service.load_data()

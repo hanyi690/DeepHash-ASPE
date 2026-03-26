@@ -8,7 +8,7 @@ ASPE 服务：非对称标量积保持加密
 - 密文 mAP 评估
 - 密钥持久化支持
 
-使用 Scheme 2（双矩阵增强方案）提供更高安全级别。
+基于 SIGMOD'09 论文实现 ASPE 算法（SkNN 风格），密文内积 = 明文内积。
 """
 
 import numpy as np
@@ -21,8 +21,7 @@ import logging
 # 添加项目根目录到路径
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from core.aspe.dcmh_wrapper_v2 import ASPEForDCMHv2
-from core.aspe.scheme2 import ASPEScheme2
+from core.aspe.dcmh_wrapper import ASPEForDCMH
 from backend.app.services.key_manager import get_key_manager
 
 logger = logging.getLogger(__name__)
@@ -32,22 +31,21 @@ class ASPEService:
     """
     ASPE 加密服务。
 
-    使用 Scheme 2（双矩阵增强方案）提供：
+    基于 SIGMOD'09 论文实现 ASPE 算法（SkNN 风格），提供：
     - 初始化 ASPE 密钥（支持持久化）
     - 加密检索库哈希码
     - 生成查询陷阱门
     - 计算密文汉明距离
     - 计算密文 mAP
 
-    安全特性：
-    - 安全级别：3（抵抗已知明文攻击）
+    特性：
+    - 密文内积 = 明文内积
     - 双矩阵：M1, M2
     - 拆分向量：S
     """
 
     def __init__(self,
                  bit_dim: int = 64,
-                 d_prime: Optional[int] = None,
                  seed: int = 42,
                  key_path: Optional[str] = None,
                  auto_load_keys: bool = True):
@@ -56,20 +54,19 @@ class ASPEService:
 
         参数：
             bit_dim: 哈希码位数（必须与 DCMH 一致）
-            d_prime: 扩展维度（默认：max(bit_dim+1, 80)）
             seed: ASPE 密钥生成的随机种子
             key_path: 可选的密钥保存/加载路径（已弃用，使用 KeyManager）
             auto_load_keys: 是否自动加载持久化密钥
         """
         self.bit_dim = bit_dim
-        self.d_prime = d_prime
         self.seed = seed
 
-        # 初始化 ASPE 包装器 V2 (Scheme 2)
-        self.aspe_wrapper = ASPEForDCMHv2(bit_dim=bit_dim, d_prime=d_prime, seed=seed)
+        # 初始化 ASPE 包装器
+        self.aspe_wrapper = ASPEForDCMH(bit_dim=bit_dim, seed=seed)
 
         # 加密检索库缓存
-        self.encrypted_database: Optional[np.ndarray] = None
+        self.encrypted_database: Optional[np.ndarray] = None  # 加密的图像哈希码（用于标签→图像检索）
+        self.encrypted_text_database: Optional[np.ndarray] = None  # 加密的文本哈希码（用于图像→标签检索）
         self.database_labels: Optional[np.ndarray] = None  # LAll 类别标签（用于 mAP 计算）
         self.database_codes: Optional[np.ndarray] = None
 
@@ -81,31 +78,24 @@ class ASPEService:
         """从 KeyManager 加载持久化密钥。"""
         try:
             key_manager = get_key_manager()
-            keys = key_manager.get_dcmh_v2_keys(
+            keys = key_manager.get_dcmh_keys(
                 bit_dim=self.bit_dim,
-                d_prime=self.d_prime,
                 seed=self.seed
             )
 
             # 应用密钥到 ASPE 包装器
-            # Scheme 2 使用 M1, M2, S, w 矩阵
             if keys:
                 if 'M1' in keys:
-                    self.aspe_wrapper.aspe.M1 = keys['M1']
+                    self.aspe_wrapper.M1 = keys['M1']
                 if 'M2' in keys:
-                    self.aspe_wrapper.aspe.M2 = keys['M2']
+                    self.aspe_wrapper.M2 = keys['M2']
                 if 'S' in keys:
-                    self.aspe_wrapper.aspe.S = keys['S']
-                if 'w' in keys:
-                    self.aspe_wrapper.aspe.w = keys['w']
+                    self.aspe_wrapper.S = keys['S']
                 if 'M1_inv' in keys and keys['M1_inv'] is not None:
-                    self.aspe_wrapper.aspe.M1_inv = keys['M1_inv']
+                    self.aspe_wrapper.M1_inv = keys['M1_inv']
                 if 'M2_inv' in keys and keys['M2_inv'] is not None:
-                    self.aspe_wrapper.aspe.M2_inv = keys['M2_inv']
-                if 'd_prime' in keys:
-                    self.aspe_wrapper.actual_d_prime = keys['d_prime']
-                    self.aspe_wrapper.aspe.d_prime = keys['d_prime']
-                logger.info(f"[ASPEService] 已加载 Scheme 2 持久化密钥")
+                    self.aspe_wrapper.M2_inv = keys['M2_inv']
+                logger.info(f"[ASPEService] 已加载持久化密钥")
         except Exception as e:
             logger.warning(f"[ASPEService] 加载持久化密钥失败：{e}，将使用临时密钥")
 
@@ -113,14 +103,14 @@ class ASPEService:
                         hash_codes: np.ndarray,
                         labels: Optional[np.ndarray] = None) -> np.ndarray:
         """
-        加密检索库哈希码。
+        加密图像哈希码数据库（用于标签→图像检索）。
 
         参数：
-            hash_codes: {-1, +1}^{N×bit} 检索库哈希码
-            labels: LAll 类别标签 {0,1}^{N×L}（用于 mAP 计算）
+            hash_codes: {-1, +1}^{N×bit} 图像哈希码
+            labels: LAll 类别标签 {0,1}^{N×L}（用于 mAP 计算，与加密无关）
 
         返回：
-            {N×(bit+1)} 加密检索库
+            {N×(2×bit)} 加密后的图像哈希码
         """
         # 加密哈希码
         encrypted = self.aspe_wrapper.GenEnc(hash_codes)
@@ -133,20 +123,37 @@ class ASPEService:
 
         return encrypted
 
+    def encrypt_text_database(self,
+                              text_hash_codes: np.ndarray) -> np.ndarray:
+        """
+        加密文本哈希码数据库（用于图像→标签检索）。
+
+        参数：
+            text_hash_codes: {-1, +1}^{N×bit} 文本哈希码
+
+        返回：
+            {N×(2×bit)} 加密后的文本哈希码
+        """
+        # 加密文本哈希码
+        encrypted = self.aspe_wrapper.GenEnc(text_hash_codes)
+
+        # 缓存加密结果
+        self.encrypted_text_database = encrypted
+
+        return encrypted
+
     def generate_trapdoor(self,
-                         query_codes: np.ndarray,
-                         r: Optional[float] = None) -> np.ndarray:
+                         query_codes: np.ndarray) -> np.ndarray:
         """
         生成查询陷阱门。
 
         参数：
             query_codes: {-1, +1}^{M×bit} 查询哈希码
-            r: 可选的缩放因子
 
         返回：
-            {M×(bit+1)} 加密查询（陷阱门）
+            {M×(2×bit)} 加密查询（陷阱门）
         """
-        return self.aspe_wrapper.GenTrap(query_codes, r)
+        return self.aspe_wrapper.GenTrap(query_codes)
 
     def compute_ciphertext_distances(self,
                                     encrypted_query: np.ndarray,
@@ -155,8 +162,8 @@ class ASPEService:
         计算密文汉明距离。
 
         参数：
-            encrypted_query: 加密查询 [M, bit+1]
-            encrypted_database: 加密检索库 [N, bit+1]（可选，使用缓存）
+            encrypted_query: 加密查询 [M, 2×bit]
+            encrypted_database: 加密检索库 [N, 2×bit]（可选，使用缓存）
 
         返回：
             [M, N] 汉明距离矩阵
@@ -178,7 +185,7 @@ class ASPEService:
         计算密文 mAP。
 
         参数：
-            encrypted_query: 加密查询 [M, bit+1]
+            encrypted_query: 加密查询 [M, 2×bit]
             query_labels: 查询类别标签 LAll {0,1}^{M×L}
             k: 截断位置（默认使用全部）
 
@@ -259,8 +266,10 @@ class ASPEService:
             if tsum == 0:
                 continue
 
-            # 按距离排序（升序）
-            ind = np.argsort(distances[i])
+            # 使用统一的排序逻辑：四舍五入 + lexsort 确保相同距离时的确定性排序
+            dist_i = distances[i]
+            dist_rounded = np.round(dist_i, decimals=10)
+            ind = np.lexsort((np.arange(len(dist_rounded)), dist_rounded))
             gnd_sorted = gnd[ind]
 
             # 计算 AP
@@ -313,11 +322,9 @@ class ASPEService:
         """获取服务状态。"""
         return {
             "bit_dim": self.bit_dim,
-            "d_prime": self.aspe_wrapper.actual_d_prime,
-            "ciphertext_dim": 2 * self.aspe_wrapper.actual_d_prime,
+            "ciphertext_dim": 2 * self.bit_dim,
             "seed": self.seed,
-            "scheme": "Scheme 2 (双矩阵增强方案)",
-            "security_level": 3,
+            "scheme": "ASPE (SkNN 风格)",
             "database_encrypted": self.encrypted_database is not None,
             "database_size": self.encrypted_database.shape[0] if self.encrypted_database is not None else 0,
             "database_labels_set": self.database_labels is not None

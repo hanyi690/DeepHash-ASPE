@@ -396,31 +396,44 @@ def calc_map_k(qB: torch.Tensor, rB: torch.Tensor,
     # 向量化：一次性计算所有汉明距离 [num_query, num_retrieval]
     hamm = calc_hamming_dist(qB, rB)
 
+    # 转换为 numpy 以便使用与密文一致的排序逻辑
+    if hamm.is_cuda:
+        hamm_np = hamm.cpu().numpy()
+    else:
+        hamm_np = hamm.numpy()
+
     # 向量化：一次性计算所有 ground truth [num_query, num_retrieval]
     gnd = (query_L.mm(retrieval_L.transpose(0, 1)) > 0).float()
+    if gnd.is_cuda:
+        gnd_np = gnd.cpu().numpy()
+    else:
+        gnd_np = gnd.numpy()
 
-    # 计算 mAP
+    # 计算 mAP（使用与密文一致的排序逻辑）
     map_score = 0.0
     for i in range(num_query):
-        gnd_i = gnd[i]
+        gnd_i = gnd_np[i]
         tsum = gnd_i.sum()
         if tsum == 0:
             continue
 
-        # 按汉明距离排序
-        _, ind = torch.sort(hamm[i])
+        # 使用与密文一致的排序逻辑：四舍五入 + lexsort
+        # 确保相同距离的项按索引顺序排列
+        hamm_i = hamm_np[i]
+        hamm_rounded = np.round(hamm_i, decimals=10)
+        ind = np.lexsort((np.arange(len(hamm_rounded)), hamm_rounded))
+
+        # 重排相关性标签
         gnd_i = gnd_i[ind]
 
         total = min(k, int(tsum))
-        count = torch.arange(1, total + 1, dtype=torch.float32)
-        if gnd_i.is_cuda:
-            count = count.cuda()
+        count = np.arange(1, total + 1, dtype=np.float32)
 
-        tindex = torch.nonzero(gnd_i)[:total].squeeze().float() + 1.0
-        map_score = map_score + torch.mean(count / tindex)
+        tindex = np.flatnonzero(gnd_i)[:total].astype(np.float32) + 1.0
+        map_score = map_score + np.mean(count / tindex)
 
     map_score = map_score / num_query
-    return map_score
+    return float(map_score)
 
 
 if __name__ == "__main__":

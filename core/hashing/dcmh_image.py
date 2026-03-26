@@ -75,8 +75,9 @@ class DCMHImageModule(DCMHBasicModule):
         self.classifier = nn.Linear(in_features=4096, out_features=bit)
         self.classifier.weight.data = torch.randn(bit, 4096) * 0.01
         self.classifier.bias.data = torch.randn(bit) * 0.01
-        # 使用 register_buffer 确保 mean 被 state_dict 保存/加载
-        self.register_buffer('mean', torch.zeros(3, 224, 224))
+        # ImageNet 归一化均值（与参考实现一致，使用普通属性而非 buffer）
+        # 这样 state_dict 不会包含 mean，加载模型时不会报错
+        self.mean = torch.zeros(3, 224, 224)
         if pretrain_model:
             self._init(pretrain_model)
 
@@ -88,9 +89,8 @@ class DCMHImageModule(DCMHBasicModule):
             data: 预训练模型数据字典（从 imagenet-vgg-f.mat 加载）
         """
         weights = data['layers'][0]
-        # 使用 copy_ 而非直接赋值，因为 mean 是 buffer
-        mean_tensor = torch.from_numpy(data['normalization'][0][0][0].transpose()).type(torch.float)
-        self.mean.copy_(mean_tensor)
+        # 直接赋值（与参考实现一致，mean 是普通属性）
+        self.mean = torch.from_numpy(data['normalization'][0][0][0].transpose()).type(torch.float)
         for k, v in self.features.named_children():
             k = int(k)
             if isinstance(v, nn.Conv2d):
