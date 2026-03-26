@@ -9,6 +9,7 @@
 - **隐私保护**：使用 ASPE 加密实现加密数据库检索
 - **全检索模式**：文本→图像、图像→文本、图像→图像
 - **结果可视化**：统一使用 ResultsGrid 组件显示检索结果（含图像缩略图）
+- **高质量图像显示**：DCMH 检索结果直接从原始 JPG 文件加载，避免预处理图像恢复带来的质量损失
 - **Web 演示系统**：Next.js 14 前端 + FastAPI 后端
 
 ## 系统架构
@@ -635,6 +636,73 @@ data/
 - `config/dcmh_config.py`：DCMH 模型和训练参数
 - `config/aspe_config.py`：ASPE 加密参数
 - `config/dataset_config.py`：数据集路径配置
+
+## 更新日志
+
+### 2026-03-26: 图像预处理与颜色修复
+
+**问题 1：图像颜色异常**
+- 原因：`FLICKR-25K.mat` 中图像是 BGR 格式，已减去 VGG-F 均值
+- 修复：`_load_mat_image` 使用正确的 VGG-F 均值恢复和 BGR→RGB 转换
+
+**问题 2：图搜文检索效果差**
+- 原因：用户上传图片的预处理与训练数据不一致
+- 训练时：原始图像 → 减去 VGG-F 均值 → 存入 .mat → 模型 forward 再减均值
+- 用户上传：原始图像 → 直接传入模型 → 只减一次均值
+- 修复：`preprocess_image_for_inference` 添加 VGG-F 均值减法步骤
+
+**VGG-F 均值（BGR 格式）**：
+- B = 123.66, G = 116.77, R = 103.93
+
+**修改文件**：
+- `backend/app/services/dcmh_service.py`：修复预处理函数，添加均值减法
+- `backend/app/routers/images.py`：修复图像显示，使用正确均值和 BGR→RGB
+
+### 2026-03-26: 代码清理与精简
+
+**目标**：移除冗余代码，提高代码可读性和可维护性。
+
+**清理内容**：
+
+1. **P0 未使用代码删除**：
+   - `dcmh_service.py`：删除 `PRETRAIN_MODEL_PATH`、`DEFAULT_Y_DIM`、`preprocess_tag_vector()`、`generate_database_codes()`、`get_all_dcmh_services()`
+   - `dataset_service.py`：删除 `get_all_dataset_services()`
+   - `cir_service.py`：删除 `get_feature_dim()`
+   - `search.py`：删除 `_generate_demo_query_code()`
+
+2. **P1 错误代码删除**：
+   - `cir_retrieval.py`：删除调用不存在方法的端点 `build_index()`、`save_index()`、`load_index()`
+   - 删除相关未使用的请求模型：`BuildIndexRequest`、`LoadIndexRequest`、`SaveIndexRequest`、`SknnBuildDatabaseRequest`
+
+3. **P2 兼容旧格式代码删除**：
+   - `hash_cache_service.py`：删除 `save_cache()`、`load_cache()`、`save_encrypted_cache()`、`load_encrypted_cache()`、`build_database_cache()`、`get_cache_info_legacy()`
+   - `hash_cache_service.py`：简化 `load_dcmh_tags()`，移除旧格式检测逻辑
+   - `schemas/search.py`：删除 `HitStats` 中的兼容字段 `hits`、`hit_rate`、`query_tag_count`
+
+**API 更新**：
+- `datasets.py` 和 `encrypt.py` 改用 `build_full_database_cache()` 替代已删除的 `build_database_cache()`
+
+### 2026-03-26: DCMH 检索数据混淆修复
+
+**问题**：`aspe_service.database_labels` 存储的是 YAll（1386维标签向量）而非 LAll（24维类别标签），导致 mAP 计算使用错误的数据。
+
+**修复**：
+- `search.py`：`ensure_cache_initialized` 函数现在正确加载 LAll 赋值给 `aspe_service.database_labels`
+- `hash_cache_service.py`：`build_encrypted_cache` 方法现在使用 LAll 进行加密
+- `hash_cache_service.py`：新增 `load_dcmh_yall` 方法，返回 YAll 数据（`load_full_database` 作为兼容别名保留）
+
+**数据命名规范**：
+- `YAll (tags)`：标签向量（1386维）- 用于生成文本哈希码、检索结果显示标签名称
+- `LAll (labels)`：类别标签向量（24维）- 用于计算 mAP
+
+**数据流**：
+```
+hash_cache.load_dcmh_yall() → YAll
+hash_cache.load_dcmh_lall() → LAll
+
+hash_cache.database_tags     = YAll (用于检索结果显示)
+aspe_service.database_labels = LAll (用于 mAP 计算)
+```
 
 ## 许可证
 

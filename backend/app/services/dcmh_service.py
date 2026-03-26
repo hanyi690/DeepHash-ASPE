@@ -26,7 +26,7 @@ from core.hashing.dcmh_image import DCMHImageModule
 from core.hashing.dcmh_text import DCMHTextModule
 
 # 导入数据集配置
-from backend.app.services.dataset_service import get_y_dim_for_dataset, DATASET_CONFIGS
+from app.services.dataset_service import get_y_dim_for_dataset, DATASET_CONFIGS
 
 logger = logging.getLogger(__name__)
 
@@ -37,20 +37,21 @@ MODEL_DIRS = {
 }
 FALLBACK_MODEL_DIR = PROJECT_ROOT / "results"
 
-# 预训练 VGG-F 模型路径
-PRETRAIN_MODEL_PATH = PROJECT_ROOT / "data" / "imagenet-vgg-f.mat"
-
 
 def preprocess_image_for_inference(image: Image.Image,
                                    target_size: tuple = (224, 224)) -> torch.Tensor:
     """
-    推理时预处理图像（与训练一致）。
+    预处理图像用于 DCMH 推理。
 
-    步骤：
-    1. 调整大小到 224x224
-    2. 转换为 tensor
+    与训练时的预处理保持一致：
+    1. 转换为 RGB
+    2. 调整大小到 224x224
+    3. 转换为 float32 数组 [0, 255]
+    4. HWC -> CHW
+    5. 减去 VGG-F 均值（BGR 格式）
 
-    注意：均值减法在模型内部完成，这里不需要手动处理。
+    注意：模型 forward 会再次减均值，这里预减均值是为了与训练数据一致。
+    训练数据在 MATLAB 中已经减过一次均值，所以用户上传的图片也需要预减均值。
 
     参数：
         image: PIL 图像对象
@@ -59,35 +60,26 @@ def preprocess_image_for_inference(image: Image.Image,
     返回：
         预处理后的图像张量 [3, H, W]
     """
-    # 转换为 RGB
+    # 1. 转换为 RGB
     image = image.convert('RGB')
 
-    # 调整大小
+    # 2. 调整大小
     image = image.resize(target_size, Image.BILINEAR)
 
-    # 转换为 numpy 数组
-    img_np = np.array(image, dtype=np.float32)
+    # 3. 转换为 numpy 数组
+    img_np = np.array(image, dtype=np.float32)  # HWC, [0, 255]
 
-    # 通道顺序：HWC -> CHW
+    # 4. HWC -> CHW
     img_np = img_np.transpose(2, 0, 1)
 
-    # 不在这里减均值，让模型内部处理
-    # 训练时模型内部会执行 x - self.mean，这里减了会导致重复减均值
+    # 5. 减去 VGG-F 均值（BGR 格式）
+    # VGG-F 均值：B=123.66, G=116.77, R=103.93
+    # 注意：.mat 文件中图像是 BGR 格式，所以用 BGR 均值
+    # 这样用户上传图片与训练数据的预处理一致
+    vggf_mean = np.array([123.66, 116.77, 103.93], dtype=np.float32).reshape(3, 1, 1)
+    img_np = img_np - vggf_mean
 
     return torch.from_numpy(img_np)
-
-
-def preprocess_tag_vector(tag_vector: np.ndarray) -> torch.Tensor:
-    """
-    预处理标签向量。
-
-    参数：
-        tag_vector: multi-hot 标签向量 [y_dim]
-
-    返回：
-        预处理后的标签张量
-    """
-    return torch.from_numpy(tag_vector.astype(np.float32))
 
 
 class DCMHService:
@@ -101,9 +93,6 @@ class DCMHService:
     - 支持多数据集
     - 正确的预处理流程
     """
-
-    # 默认标签维度 (Flickr25K)
-    DEFAULT_Y_DIM = 1386
 
     def __init__(self,
                  bit_dim: int = 64,
@@ -219,6 +208,19 @@ class DCMHService:
         try:
             # 使用 map_location 确保在 CPU 上也能加载 GPU 训练的模型
             self.img_model.load(path, use_gpu=self.use_gpu)
+
+            # 如果 mean 为全零，从预训练模型加载
+            if self.img_model.mean.abs().sum() < 1e-6:
+                pretrain_path = PROJECT_ROOT / "data" / "imagenet-vgg-f.mat"
+                if pretrain_path.exists():
+                    import scipy.io as scio
+                    data = scio.loadmat(str(pretrain_path))
+                    mean_tensor = torch.from_numpy(
+                        data['normalization'][0][0][0].transpose()
+                    ).type(torch.float)
+                    self.img_model.mean.copy_(mean_tensor)
+                    logger.info(f"[DCMHService] 已从预训练模型加载 mean")
+
             logger.info(f"[DCMHService] 已加载图像模型：{path}")
             self.model_loaded = True
         except Exception as e:
@@ -354,19 +356,6 @@ class DCMHService:
         text_tensor = torch.from_numpy(tag_vector).unsqueeze(0)
         return self.generate_text_code_single(text_tensor)
 
-    def generate_database_codes(self, images: torch.Tensor, batch_size: int = 64) -> torch.Tensor:
-        """
-        批量生成数据库哈希码。
-
-        参数：
-            images: 图像张量 [N, 3, H, W]
-            batch_size: 批次大小
-
-        返回：
-            哈希码张量 [N, bit_dim]
-        """
-        return self.generate_image_code(images)
-
     def is_loaded(self) -> bool:
         """检查模型是否已加载。"""
         return self.model_loaded
@@ -401,8 +390,3 @@ def get_dcmh_service(dataset: str = 'flickr25k', **kwargs) -> DCMHService:
     if dataset not in _dcmh_services:
         _dcmh_services[dataset] = DCMHService(dataset=dataset, **kwargs)
     return _dcmh_services[dataset]
-
-
-def get_all_dcmh_services() -> Dict[str, DCMHService]:
-    """获取所有 DCMH 服务实例。"""
-    return _dcmh_services.copy()

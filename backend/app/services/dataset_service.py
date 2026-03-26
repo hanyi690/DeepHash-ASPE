@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 # 数据集配置
 DATASET_CONFIGS = {
     'flickr25k': {
+        'type': 'raw',  # 使用原始 JPG 文件
         'mat_path': 'data/FLICKR-25K.mat',              # .mat 文件路径
         'images_dir': 'data/dcmh/flickr25k/mirflickr',  # 原始图像目录（用于显示）
         'tag_mapping_path': 'data/dcmh/flickr25k/tag_mapping.npy',  # YAll 列到标签名映射
@@ -311,6 +312,27 @@ class MatDatasetService:
         if self._clean_id is not None and 0 <= idx < len(self._clean_id):
             return int(self._clean_id[idx])
         return idx
+
+    def get_image_path(self, idx: int) -> Path:
+        """
+        获取原始图像文件路径。
+
+        参数：
+            idx: .mat 文件中的行索引
+
+        返回：
+            原始图像文件的完整路径
+        """
+        # 获取原始图像 ID
+        original_id = self.get_original_image_id(idx)
+
+        # 构建图像文件名：im{original_id + 1}.jpg
+        filename = f"im{original_id + 1}.jpg"
+
+        # 获取原始图像目录
+        images_dir = PROJECT_ROOT / self.config['images_dir']
+
+        return images_dir / filename
 
     def get_image_count(self) -> int:
         """获取图像总数。"""

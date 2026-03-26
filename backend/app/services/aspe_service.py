@@ -70,7 +70,7 @@ class ASPEService:
 
         # 加密检索库缓存
         self.encrypted_database: Optional[np.ndarray] = None
-        self.database_tags: Optional[np.ndarray] = None
+        self.database_labels: Optional[np.ndarray] = None  # LAll 类别标签（用于 mAP 计算）
         self.database_codes: Optional[np.ndarray] = None
 
         # 自动加载持久化密钥
@@ -111,13 +111,13 @@ class ASPEService:
 
     def encrypt_database(self,
                         hash_codes: np.ndarray,
-                        tags: Optional[np.ndarray] = None) -> np.ndarray:
+                        labels: Optional[np.ndarray] = None) -> np.ndarray:
         """
         加密检索库哈希码。
 
         参数：
             hash_codes: {-1, +1}^{N×bit} 检索库哈希码
-            tags: 可选的标签（用于 mAP 计算）
+            labels: LAll 类别标签 {0,1}^{N×L}（用于 mAP 计算）
 
         返回：
             {N×(bit+1)} 加密检索库
@@ -128,8 +128,8 @@ class ASPEService:
         # 缓存加密结果
         self.encrypted_database = encrypted
         self.database_codes = hash_codes
-        if tags is not None:
-            self.database_tags = tags
+        if labels is not None:
+            self.database_labels = labels
 
         return encrypted
 
@@ -172,14 +172,14 @@ class ASPEService:
 
     def compute_ciphertext_map(self,
                               encrypted_query: np.ndarray,
-                              query_tags: np.ndarray,
+                              query_labels: np.ndarray,
                               k: Optional[int] = None) -> float:
         """
         计算密文 mAP。
 
         参数：
             encrypted_query: 加密查询 [M, bit+1]
-            query_tags: 查询标签 {0,1}^{M×L}
+            query_labels: 查询类别标签 LAll {0,1}^{M×L}
             k: 截断位置（默认使用全部）
 
         返回：
@@ -188,27 +188,27 @@ class ASPEService:
         if self.encrypted_database is None:
             raise ValueError("加密检索库未初始化")
 
-        if self.database_tags is None:
-            raise ValueError("检索库标签未设置")
+        if self.database_labels is None:
+            raise ValueError("检索库类别标签未设置")
 
         return self.aspe_wrapper.calc_ciphertext_map(
             encrypted_qB=encrypted_query,
             encrypted_rB=self.encrypted_database,
-            query_L=query_tags,
-            retrieval_L=self.database_tags,
+            query_L=query_labels,
+            retrieval_L=self.database_labels,
             k=k
         )
 
     def compute_plaintext_map(self,
                              query_codes: np.ndarray,
-                             query_tags: np.ndarray,
+                             query_labels: np.ndarray,
                              k: Optional[int] = None) -> float:
         """
         计算明文 mAP（用于对比）。
 
         参数：
             query_codes: {-1, +1}^{M×bit} 查询哈希码
-            query_tags: 查询标签 {0,1}^{M×L}
+            query_labels: 查询类别标签 LAll {0,1}^{M×L}
             k: 截断位置
 
         返回：
@@ -217,15 +217,15 @@ class ASPEService:
         if self.database_codes is None:
             raise ValueError("检索库哈希码未设置")
 
-        if self.database_tags is None:
-            raise ValueError("检索库标签未设置")
+        if self.database_labels is None:
+            raise ValueError("检索库类别标签未设置")
 
         # 计算明文汉明距离
         distances = self._plaintext_hamming_distance(query_codes, self.database_codes)
 
         # 计算 mAP
         return self._compute_map_from_distances(
-            distances, query_tags, self.database_tags, k
+            distances, query_labels, self.database_labels, k
         )
 
     def _plaintext_hamming_distance(self,
@@ -239,21 +239,21 @@ class ASPEService:
 
     def _compute_map_from_distances(self,
                                    distances: np.ndarray,
-                                   query_tags: np.ndarray,
-                                   retrieval_tags: np.ndarray,
+                                   query_labels: np.ndarray,
+                                   retrieval_labels: np.ndarray,
                                    k: Optional[int] = None) -> float:
         """从距离矩阵计算 mAP。"""
         num_query = distances.shape[0]
         map_score = 0.0
 
         if k is None:
-            k = retrieval_tags.shape[0]
+            k = retrieval_labels.shape[0]
 
         for i in range(num_query):
-            q_L = query_tags[i:i+1]
+            q_L = query_labels[i:i+1]
 
             # 计算相关性
-            gnd = (q_L @ retrieval_tags.T > 0).squeeze().astype(np.float32)
+            gnd = (q_L @ retrieval_labels.T > 0).squeeze().astype(np.float32)
 
             tsum = np.sum(gnd)
             if tsum == 0:
@@ -276,14 +276,14 @@ class ASPEService:
 
     def verify_consistency(self,
                           query_codes: np.ndarray,
-                          query_tags: np.ndarray,
+                          query_labels: np.ndarray,
                           num_samples: int = 10) -> Dict[str, float]:
         """
         验证 ASPE 加密前后 mAP 一致性。
 
         参数：
             query_codes: 查询哈希码
-            query_tags: 查询标签
+            query_labels: 查询类别标签 LAll
             num_samples: 采样查询数量
 
         返回：
@@ -294,12 +294,12 @@ class ASPEService:
 
         # 计算明文 mAP
         plaintext_map = self.compute_plaintext_map(
-            query_codes[:num_samples], query_tags[:num_samples]
+            query_codes[:num_samples], query_labels[:num_samples]
         )
 
         # 计算密文 mAP
         ciphertext_map = self.compute_ciphertext_map(
-            encrypted_query, query_tags[:num_samples]
+            encrypted_query, query_labels[:num_samples]
         )
 
         return {
@@ -320,7 +320,7 @@ class ASPEService:
             "security_level": 3,
             "database_encrypted": self.encrypted_database is not None,
             "database_size": self.encrypted_database.shape[0] if self.encrypted_database is not None else 0,
-            "database_tags_set": self.database_tags is not None
+            "database_labels_set": self.database_labels is not None
         }
 
 

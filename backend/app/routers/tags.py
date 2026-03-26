@@ -124,64 +124,35 @@ async def get_dataset_tag_names(dataset: str):
     """
     dataset_lower = dataset.lower()
 
-    # 尝试从数据集服务获取 YAll 顺序的标签名
+    # 从数据集服务获取 YAll 顺序的标签名
     try:
         dataset_service = get_dataset_service(dataset_name=dataset_lower)
-        config = DATASET_CONFIGS.get(dataset_lower, {})
+        tag_names_list = dataset_service.get_tag_names()
 
-        if config.get('type') == 'raw':
-            # 从 tag_mapping.npy 获取 YAll 索引对应的标签名
-            from pathlib import Path
-            import numpy as np
-
-            tag_mapping_path = Path(config['data_path']) / 'tag_mapping.npy'
-            tag_mapping_path_full = Path(__file__).parent.parent.parent.parent / tag_mapping_path
-
-            if tag_mapping_path_full.exists():
-                tag_mapping = np.load(str(tag_mapping_path_full), allow_pickle=True)
-                return {
-                    "success": True,
-                    "dataset": dataset_lower,
-                    "tag_names": tag_mapping.tolist(),
-                    "total": len(tag_mapping),
-                    "source": "yall_mapping",
-                    "message": f"获取 {dataset_lower} 标签名称成功（YAll 顺序），共 {len(tag_mapping)} 个标签"
-                }
-
-            # 回退到原始 common_tags 顺序
-            tag_names_list = dataset_service.get_tag_names()
-            if tag_names_list:
-                return {
-                    "success": True,
-                    "dataset": dataset_lower,
-                    "tag_names": tag_names_list,
-                    "total": len(tag_names_list),
-                    "source": "common_tags",
-                    "message": f"获取 {dataset_lower} 标签名称成功，共 {len(tag_names_list)} 个标签"
-                }
+        if tag_names_list:
+            return {
+                "success": True,
+                "dataset": dataset_lower,
+                "tag_names": tag_names_list,
+                "total": len(tag_names_list),
+                "source": "tag_mapping",
+                "message": f"获取 {dataset_lower} 标签名称成功（YAll 顺序），共 {len(tag_names_list)} 个标签"
+            }
     except Exception as e:
-        # 回退到预定义列表
-        pass
-
-    # 使用预定义标签名
-    tag_names_list = get_tag_names(dataset_lower)
-
-    if not tag_names_list:
         return {
             "success": False,
-            "dataset": dataset,
+            "dataset": dataset_lower,
             "tag_names": [],
             "total": 0,
-            "message": f"不支持的数据集: {dataset}，支持的数据集: {list(TAGS.keys())}"
+            "message": f"获取标签名称失败: {str(e)}"
         }
 
     return {
-        "success": True,
+        "success": False,
         "dataset": dataset_lower,
-        "tag_names": tag_names_list,
-        "total": len(tag_names_list),
-        "source": "predefined",
-        "message": f"获取 {dataset_lower} 标签名称成功，共 {len(tag_names_list)} 个标签"
+        "tag_names": [],
+        "total": 0,
+        "message": f"不支持的数据集: {dataset}"
     }
 
 

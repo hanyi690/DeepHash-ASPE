@@ -540,10 +540,6 @@ class CIRService:
         """获取索引图像数量。"""
         return len(self.db_image_names) if self.db_image_names else 0
 
-    def get_feature_dim(self) -> int:
-        """获取特征维度。"""
-        return self.feature_dim
-
     @property
     def is_indexed(self) -> bool:
         """检查是否已构建索引。"""

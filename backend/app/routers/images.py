@@ -19,6 +19,10 @@ from app.schemas.search import ImageUploadResponse, ImageFeatureResponse
 from app.services.dcmh_service import get_dcmh_service
 from app.services.dataset_service import get_dataset_service, DATASET_CONFIGS
 
+# VGG-F ImageNet 均值（BGR 格式，用于恢复 .mat 中的预处理图像）
+# B=123.66, G=116.77, R=103.93
+VGGF_MEAN_BGR = np.array([123.66, 116.77, 103.93], dtype=np.float32).reshape(1, 1, 3)
+
 router = APIRouter(prefix="/api/images", tags=["images"])
 
 
@@ -169,7 +173,8 @@ async def get_image(
         # 默认返回 JSON 元信息
         config = DATASET_CONFIGS.get(dataset, {})
         if config.get('type') == 'raw':
-            thumbnail_url = f"/flickr-images/im{image_id + 1}.jpg"
+            original_id = dataset_service.get_original_image_id(image_id)
+            thumbnail_url = f"/flickr-images/im{original_id + 1}.jpg"
         else:
             thumbnail_url = f"/api/images/{image_id}?format=image&dataset={dataset}"
 
@@ -223,7 +228,7 @@ def _load_raw_image(image_id: int, dataset_service) -> Response:
 
 def _load_mat_image(image_id: int, dataset_service) -> Response:
     """
-    从 .mat 文件加载图像。
+    从 .mat 文件加载并恢复图像。
 
     参数：
         image_id: 图像索引（从 0 开始）
@@ -234,34 +239,43 @@ def _load_mat_image(image_id: int, dataset_service) -> Response:
     """
     import h5py
 
-    h5_file = h5py.File(dataset_service.data_path, 'r')
+    h5_file = h5py.File(dataset_service.mat_path, 'r')
     try:
         images = h5_file['images']
         if image_id >= len(images):
             raise HTTPException(status_code=404, detail="Image index out of range")
 
-        # 获取图像数据
+        # 获取图像数据 (CHW, int8)
         img_data = images[image_id]
 
-        # CHW -> HWC
-        img_data = np.transpose(img_data, (1, 2, 0))
+        # 恢复图像
+        img_data = img_data.astype(np.float32)  # CHW
+        # 减均值后的数据 + 均值 = 原始数据（近似）
+        img_data = img_data + VGGF_MEAN_BGR.reshape(3, 1, 1)
+        img_data = np.clip(img_data, 0, 255).astype(np.uint8)
 
-        # 转换为 uint8
-        img_data = img_data.astype(np.float32)
-        img_data = (img_data - img_data.min()) / (img_data.max() - img_data.min() + 1e-8) * 255
-        img_data = img_data.astype(np.uint8)
+        # CHW -> HWC
+        img_data = img_data.transpose(1, 2, 0)
+
+        # BGR -> RGB
+        img_data = img_data[:, :, ::-1]
+
+        # 修正方向：顺时针旋转 90 度 + 左右翻转
+        # .mat 中图像存储时经过了 MATLAB 的转置操作
+        img_data = np.rot90(img_data, k=3)  # 顺时针 90 度
+        img_data = np.fliplr(img_data)  # 左右翻转
 
         # 创建 PIL 图像
         pil_image = Image.fromarray(img_data)
 
-        # 转换为 PNG
+        # 转换为 JPEG
         img_buffer = io.BytesIO()
-        pil_image.save(img_buffer, format='PNG')
+        pil_image.save(img_buffer, format='JPEG', quality=85)
         img_buffer.seek(0)
 
         return Response(
             content=img_buffer.getvalue(),
-            media_type="image/png"
+            media_type="image/jpeg"
         )
     finally:
         h5_file.close()

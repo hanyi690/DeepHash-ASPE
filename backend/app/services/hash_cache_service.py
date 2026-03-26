@@ -10,6 +10,7 @@ backend/cache/
 │   │   ├── database_text.npz      # 文本哈希码（用于图像→文本检索）
 │   │   ├── query.npz              # 查询哈希码
 │   │   └── encrypted.npz          # 加密数据库
+|   |   └── lall.npz               #分类数据库
 │   └── nuswide/
 │       └── ...
 └── cir/                     # CIR 缓存目录
@@ -101,19 +102,9 @@ class HashCacheService:
 
         logger.info(f"[HashCacheService] 初始化：cache_dir={self.cache_dir}")
 
-    # ==================== 通用缓存方法 ====================
-
-    def get_cache_path(self, name: str) -> Path:
-        """获取缓存文件路径（兼容旧版本）。"""
-        return self.cache_dir / f"{name}.npz"
-
     def get_metadata_path(self) -> Path:
         """获取元数据文件路径。"""
         return self.cache_dir / "metadata.json"
-
-    def exists(self, name: str = "database") -> bool:
-        """检查缓存是否存在（兼容旧版本）。"""
-        return self.get_cache_path(name).exists()
 
     # ==================== DCMH 数据集缓存方法 ====================
 
@@ -201,9 +192,7 @@ class HashCacheService:
 
     def load_dcmh_tags(self, dataset: str = "flickr25k") -> Optional[np.ndarray]:
         """
-        单独加载 DCMH 标签缓存。
-
-        优先从 tags.npz 加载，如果不存在则尝试从旧格式缓存中提取。
+        加载 DCMH 标签缓存。
 
         参数：
             dataset: 数据集名称
@@ -211,28 +200,12 @@ class HashCacheService:
         返回：
             tags 数组，如果不存在则返回 None
         """
-        # 优先从 tags.npz 加载
         cache_path = self.get_dcmh_cache_path(dataset, "tags")
         if cache_path.exists():
             data = np.load(cache_path)
             tags = data.get('tags')
             logger.info(f"[HashCacheService] 已加载 DCMH 标签缓存：{cache_path}")
             return tags
-
-        # 兼容旧格式：从 database_image.npz 或 database.npz 中提取
-        for name in ["database_image", "database"]:
-            path = self.get_dcmh_cache_path(dataset, name)
-            if path.exists():
-                data = np.load(path)
-                if 'tags' in data:
-                    tags = data.get('tags')
-                    logger.info(f"[HashCacheService] 从旧格式缓存提取标签：{path}")
-                    return tags
-                # 兼容更旧的 labels 格式
-                if 'labels' in data:
-                    tags = data.get('labels')
-                    logger.info(f"[HashCacheService] 从旧格式缓存提取标签（labels）：{path}")
-                    return tags
 
         return None
 
@@ -524,12 +497,16 @@ class HashCacheService:
 
         return database_image_codes, database_text_codes, yall
 
-    def load_full_database(self,
-                           dataset: str = "flickr25k") -> Tuple[Optional[np.ndarray],
-                                                                  Optional[np.ndarray],
-                                                                  Optional[np.ndarray]]:
+    def load_dcmh_yall(self,
+                       dataset: str = "flickr25k") -> Tuple[Optional[np.ndarray],
+                                                              Optional[np.ndarray],
+                                                              Optional[np.ndarray]]:
         """
-        加载完整的数据库缓存（图像哈希码 + 文本哈希码 + 标签）。
+        加载 DCMH 数据库缓存（图像哈希码 + 文本哈希码 + YAll 标签）。
+
+        数据命名规范：
+        - YAll (tags): 标签向量（如 1386 维 multi-hot）- 用于生成文本哈希码、检索结果显示
+        - LAll (labels): 类别标签向量（如 24 维 multi-hot）- 用于计算 mAP
 
         优化：tags 从单独的 tags.npz 文件加载。
 
@@ -537,164 +514,21 @@ class HashCacheService:
             dataset: 数据集名称
 
         返回：
-            (image_codes, text_codes, tags) 元组
+            (image_codes, text_codes, yall) 元组
         """
         # 加载哈希码
         image_codes, _ = self.load_dcmh_cache(dataset, "database_image")
         text_codes, _ = self.load_dcmh_cache(dataset, "database_text")
 
-        # 加载标签（从分离的 tags.npz 或旧格式中）
-        tags = self.load_dcmh_tags(dataset)
+        # 加载 YAll 标签（从分离的 tags.npz 或旧格式中）
+        yall = self.load_dcmh_tags(dataset)
 
         # 兼容旧版：如果 image_codes 不存在，尝试从 database.npz 加载
         if image_codes is None:
-            image_codes, tags = self.load_dcmh_cache(dataset, "database")
+            image_codes, yall = self.load_dcmh_cache(dataset, "database")
 
-        return image_codes, text_codes, tags
+        return image_codes, text_codes, yall
 
-    # ==================== 兼容旧版本的方法 ====================
-
-    def save_cache(self,
-                  codes: np.ndarray,
-                  labels: Optional[np.ndarray] = None,
-                  name: str = "database"):
-        """
-        保存哈希码缓存（兼容旧版本）。
-
-        参数：
-            codes: 哈希码数组
-            labels: 标签数组（可选）
-            name: 缓存名称
-        """
-        cache_path = self.get_cache_path(name)
-
-        if labels is not None:
-            np.savez(cache_path, codes=codes, labels=labels)
-        else:
-            np.savez(cache_path, codes=codes)
-
-        logger.info(f"[HashCacheService] 已保存缓存：{cache_path}")
-
-    def load_cache(self, name: str = "database") -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
-        """
-        加载哈希码缓存（兼容旧版本）。
-
-        参数：
-            name: 缓存名称
-
-        返回：
-            (codes, labels) 元组
-        """
-        cache_path = self.get_cache_path(name)
-
-        if not cache_path.exists():
-            logger.warning(f"[HashCacheService] 缓存不存在：{cache_path}")
-            return None, None
-
-        data = np.load(cache_path)
-        codes = data.get('codes')
-        labels = data.get('labels')
-
-        logger.info(f"[HashCacheService] 已加载缓存：{cache_path}")
-        return codes, labels
-
-    def save_encrypted_cache(self, encrypted_database: np.ndarray):
-        """保存加密的数据库缓存（兼容旧版本）。"""
-        cache_path = self.get_cache_path("encrypted_database")
-        np.savez(cache_path, encrypted=encrypted_database)
-        logger.info(f"[HashCacheService] 已保存加密缓存：{cache_path}")
-
-    def load_encrypted_cache(self) -> Optional[np.ndarray]:
-        """加载加密的数据库缓存（兼容旧版本）。"""
-        cache_path = self.get_cache_path("encrypted_database")
-
-        if not cache_path.exists():
-            return None
-
-        data = np.load(cache_path)
-        return data.get('encrypted')
-
-    def build_database_cache(self,
-                            dcmh_service,
-                            dataset_service,
-                            batch_size: int = 64,
-                            force_rebuild: bool = False,
-                            dataset: str = None) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        构建数据库哈希码缓存（兼容旧版本，仅生成图像哈希码）。
-
-        注意：建议使用 build_full_database_cache() 以获得完整功能。
-
-        参数：
-            dcmh_service: DCMH 服务实例
-            dataset_service: 数据集服务实例
-            batch_size: 批次大小
-            force_rebuild: 是否强制重建
-            dataset: 数据集名称（如 flickr25k，可选）
-
-        返回：
-            (database_codes, database_tags) 元组
-        """
-        # 确定数据集名称
-        if dataset is None:
-            dataset = getattr(dataset_service, 'dataset_name', 'flickr25k')
-
-        # 检查新格式缓存
-        if not force_rebuild and self.dcmh_cache_exists(dataset, "database"):
-            codes, tags = self.load_dcmh_cache(dataset, "database")
-            if codes is not None:
-                self.database_codes = codes
-                self.database_tags = tags
-                self._current_dataset = dataset
-                return codes, tags
-
-        # 检查旧格式缓存（兼容）
-        if not force_rebuild and self.exists("database"):
-            codes, tags = self.load_cache("database")
-            if codes is not None:
-                self.database_codes = codes
-                self.database_tags = tags
-                # 迁移到新格式
-                self.save_dcmh_cache(codes, tags, dataset, "database")
-                return codes, tags
-
-        # 加载数据
-        dataset_service.load_data()
-        _, _, retrieval_indices = dataset_service.get_data_split_indices()
-
-        # 创建 DataLoader
-        img_loader = dataset_service.create_image_dataloader(
-            retrieval_indices, batch_size=batch_size
-        )
-
-        # 生成哈希码
-        logger.info("[HashCacheService] 正在生成数据库哈希码...")
-        all_codes = []
-
-        with torch.no_grad():
-            for batch_idx, (images, _) in enumerate(img_loader):
-                codes = dcmh_service.generate_image_code(images)
-                all_codes.append(codes.cpu().numpy())
-
-                if batch_idx % 50 == 0:
-                    logger.info(f"  处理进度：{batch_idx * batch_size} / {len(retrieval_indices)}")
-
-        # 获取标签（YAll）
-        all_tags = dataset_service.get_yall(retrieval_indices)
-
-        # 合并
-        database_codes = np.vstack(all_codes)
-        database_tags = all_tags
-
-        # 保存缓存（新格式）
-        self.save_dcmh_cache(database_codes, database_tags, dataset, "database")
-
-        self.database_codes = database_codes
-        self.database_tags = database_tags
-        self._current_dataset = dataset
-
-        logger.info(f"[HashCacheService] 数据库哈希码生成完成：{database_codes.shape}")
-        return database_codes, database_tags
 
     def build_query_cache(self,
                          dcmh_service,
@@ -725,16 +559,6 @@ class HashCacheService:
             if codes is not None:
                 self.query_codes = codes
                 self.query_tags = tags
-                return codes, tags
-
-        # 检查旧格式缓存（兼容）
-        if not force_rebuild and self.exists("query"):
-            codes, tags = self.load_cache("query")
-            if codes is not None:
-                self.query_codes = codes
-                self.query_tags = tags
-                # 迁移到新格式
-                self.save_dcmh_cache(codes, tags, dataset, "query")
                 return codes, tags
 
         # 加载数据
@@ -798,24 +622,24 @@ class HashCacheService:
                 aspe_service.encrypted_database = encrypted
                 return encrypted
 
-        # 检查旧格式缓存（兼容）
-        if not force_rebuild:
-            encrypted = self.load_encrypted_cache()
-            if encrypted is not None:
-                self.encrypted_database = encrypted
-                aspe_service.encrypted_database = encrypted
-                # 迁移到新格式
-                self.save_dcmh_encrypted(encrypted, dataset)
-                return encrypted
-
         # 检查明文数据库
         if self.database_codes is None:
             raise ValueError("请先构建数据库哈希码缓存")
 
+        # 加载 LAll 类别标签（用于 mAP 计算）
+        lall = self.load_dcmh_lall(dataset)
+
         # 加密
         logger.info("[HashCacheService] 正在加密数据库...")
+        if lall is None:
+            raise ValueError(
+                f"LAll 类别标签未找到 ({dataset})。"
+                f"无法加密数据库 - mAP 计算需要 LAll（24维类别标签），而非 YAll（1386维文本标签）。"
+                f"请确保 {dataset} 数据集的 LAll 数据已正确保存。"
+            )
+
         encrypted = aspe_service.encrypt_database(
-            self.database_codes, self.database_tags
+            self.database_codes, lall
         )
 
         # 保存缓存（新格式）
@@ -864,18 +688,6 @@ class HashCacheService:
             "cache_dir": str(self.cache_dir),
             "dcmh": dcmh_info,
             "cir": self.get_cir_cache_info()["datasets"]
-        }
-
-    def get_cache_info_legacy(self) -> Dict[str, Any]:
-        """获取缓存信息（兼容旧版本）。"""
-        return {
-            "cache_dir": str(self.cache_dir),
-            "bit_dim": self.bit_dim,
-            "database_cached": self.exists("database"),
-            "query_cached": self.exists("query"),
-            "encrypted_cached": self.exists("encrypted_database"),
-            "database_size": self.database_codes.shape[0] if self.database_codes is not None else 0,
-            "query_size": self.query_codes.shape[0] if self.query_codes is not None else 0
         }
 
     # ==================== CIR 特征缓存方法 ====================

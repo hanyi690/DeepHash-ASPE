@@ -233,7 +233,7 @@ async def build_dataset_cache(name: str, request: CacheBuildRequest):
                 )
 
             # 构建数据库缓存
-            database_codes, database_labels = hash_cache.build_database_cache(
+            image_codes, text_codes, tags = hash_cache.build_full_database_cache(
                 dcmh_service, dataset_service,
                 batch_size=32, force_rebuild=request.force_rebuild, dataset=name
             )

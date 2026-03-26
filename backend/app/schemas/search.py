@@ -155,14 +155,15 @@ class ImageToTagResult(BaseModel):
     score: float
     distance: float
     thumbnail_url: Optional[str] = None  # 来源图像缩略图URL
+    category_names: List[str] = []  # 结果图像的所有类别名称 (LAll)
 
 
 class EncryptionInfo(BaseModel):
     """加密状态信息。"""
-    method: str = "ASPE Scheme 1"
+    method: str = "ASPE Scheme 2"
     query_encrypted: bool = False
     database_encrypted: bool = False
-    security_level: int = 2
+    security_level: int = 3
     bit_dim: int = 64
 
 

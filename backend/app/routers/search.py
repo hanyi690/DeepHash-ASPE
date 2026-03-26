@@ -28,7 +28,7 @@ from app.schemas.search import (
 )
 from app.services.aspe_service import get_aspe_service
 from app.services.dcmh_service import get_dcmh_service
-from app.services.dataset_service import get_dataset_service
+from app.services.dataset_service import get_dataset_service, DATASET_CONFIGS
 from app.services.hash_cache_service import get_hash_cache_service, DCMH_CACHE_DIR
 
 logger = logging.getLogger(__name__)
@@ -83,16 +83,16 @@ async def ensure_cache_initialized(dataset: str = "flickr25k"):
                     aspe_service.database_labels = lall  # LAll
             else:
                 # 注意：encrypt_database 的第二个参数应该是 LAll
-                if lall is not None:
-                    encrypted = aspe_service.encrypt_database(image_codes, lall)
-                    hash_cache.encrypted_database = encrypted
-                else:
-                    logger.warning(f"[DCMH] LAll 未找到，使用 YAll 作为标签 ({dataset})")
-                    encrypted = aspe_service.encrypt_database(image_codes, yall)
-                    hash_cache.encrypted_database = encrypted
+                if lall is None:
+                    raise ValueError(
+                        f"LAll 类别标签未找到 ({dataset})。"
+                        f"无法加密数据库 - mAP 计算需要 LAll（类别标签），而非 YAll（文本标签）。"
+                    )
+                encrypted = aspe_service.encrypt_database(image_codes, lall)
+                hash_cache.encrypted_database = encrypted
 
             aspe_service.database_codes = image_codes
-            aspe_service.database_labels = lall if lall is not None else yall  # LAll 用于 mAP 计算
+            aspe_service.database_labels = lall  # LAll 用于 mAP 计算
 
             logger.info(f"[DCMH] 缓存已加载 ({dataset})：图像 {image_codes.shape[0]} 条，"
                        f"文本 {text_codes.shape[0] if text_codes is not None else 0} 条")
@@ -239,11 +239,13 @@ async def search(request: SearchRequest):
 
         # 执行检索
         distances = None
+        # 从 aspe_service 获取正确的 scheme 信息
+        aspe_status = aspe_service.get_status()
         encryption_info = EncryptionInfo(
-            method="ASPE Scheme 1",
+            method=aspe_status.get("scheme", "ASPE Scheme 2"),
             query_encrypted=False,
             database_encrypted=False,
-            security_level=2,
+            security_level=aspe_status.get("security_level", 3),
             bit_dim=dcmh_service.bit_dim
         )
 
@@ -281,6 +283,9 @@ async def search(request: SearchRequest):
 
         if request.query_type == "image_to_tag":
             # ========== 图像→标签检索：返回相似图像的标签 ==========
+            # 统计类别分布
+            category_counter = {}
+
             for rank, idx in enumerate(top_k_indices):
                 # 获取实际图像索引
                 actual_idx = retrieval_indices[idx] if idx < len(retrieval_indices) else idx
@@ -295,8 +300,26 @@ async def search(request: SearchRequest):
                 # 获取标签名称
                 tag_names = dataset_service.get_tag_names_from_yall_indices(image_tags[:20])
 
+                # 获取类别名称
+                result_category_names = []
+                if retrieval_lall is not None and idx < len(retrieval_lall):
+                    result_lall = retrieval_lall[idx]
+                    result_category_indices = np.where(result_lall > 0)[0].tolist()
+                    result_category_names = dataset_service.get_category_names_from_lall_indices(result_category_indices)
+
+                    # 统计类别分布
+                    for cat in result_category_names:
+                        category_counter[cat] = category_counter.get(cat, 0) + 1
+
                 # 生成来源图像缩略图 URL
-                thumbnail_url = f"/api/images/{image_id}?format=image&dataset={request.dataset}"
+                config = DATASET_CONFIGS.get(request.dataset, {})
+                if config.get('type') == 'raw':
+                    # 使用静态文件 URL
+                    original_id = dataset_service.get_original_image_id(image_id)
+                    thumbnail_url = f"/flickr-images/im{original_id + 1}.jpg"
+                else:
+                    # 使用 API 端点
+                    thumbnail_url = f"/api/images/{image_id}?format=image&dataset={request.dataset}"
 
                 tag_results.append(ImageToTagResult(
                     rank=rank + 1,
@@ -305,11 +328,16 @@ async def search(request: SearchRequest):
                     tag_names=tag_names,
                     score=float(1.0 / (1.0 + distances_flat[idx])),
                     distance=float(distances_flat[idx]),
-                    thumbnail_url=thumbnail_url
+                    thumbnail_url=thumbnail_url,
+                    category_names=result_category_names
                 ))
 
-            # 图像→标签检索的统计
-            hit_stats = None
+            # 图像→标签检索的统计（类别分布）
+            hit_stats = {
+                "total_results": len(tag_results),
+                "category_distribution": category_counter,
+                "query_type": "image_to_tag"
+            }
         else:
             # ========== 标签→图像检索：返回图像结果 ==========
             # 前端发送的 tag_indices 已经是 YAll 索引，直接使用
@@ -386,8 +414,15 @@ async def search(request: SearchRequest):
                 if database_codes is not None and idx < len(database_codes):
                     result_hash_code = database_codes[idx].tolist()
 
-                # 生成缩略图 URL（从 .mat 文件加载图像）
-                thumbnail_url = f"/api/images/{image_id}?format=image&dataset={request.dataset}"
+                # 生成缩略图 URL
+                config = DATASET_CONFIGS.get(request.dataset, {})
+                if config.get('type') == 'raw':
+                    # 使用静态文件 URL
+                    original_id = dataset_service.get_original_image_id(image_id)
+                    thumbnail_url = f"/flickr-images/im{original_id + 1}.jpg"
+                else:
+                    # 使用 API 端点
+                    thumbnail_url = f"/api/images/{image_id}?format=image&dataset={request.dataset}"
 
                 # 确保 distance 和 score 非负
                 distance = max(0.0, float(distances_flat[idx]))

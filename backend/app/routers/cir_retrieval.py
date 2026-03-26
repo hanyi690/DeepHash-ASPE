@@ -169,12 +169,6 @@ async def ensure_cir_cache_initialized(dataset: str = "roxford5k"):
 
 # ============= 请求/响应模型 =============
 
-class BuildIndexRequest(BaseModel):
-    """Request model for building index."""
-    image_paths: List[str] = Field(..., description="List of image paths to index")
-    image_ids: Optional[List[str]] = Field(None, description="Optional list of image IDs")
-
-
 class SearchRequest(BaseModel):
     """Request model for image search."""
     query_image_path: str = Field(..., description="Path to query image")
@@ -186,23 +180,6 @@ class PrivacySearchRequest(BaseModel):
     """Request model for privacy-preserving search."""
     image_file: UploadFile = File(..., description="Query image file")
     top_k: int = Field(default=10, ge=1, le=100)
-
-
-class LoadIndexRequest(BaseModel):
-    """Request model for loading index."""
-    index_dir: str = Field(..., description="Directory containing index files")
-
-
-class SaveIndexRequest(BaseModel):
-    """Request model for saving index."""
-    save_dir: str = Field(..., description="Directory to save index files")
-
-
-class SknnBuildDatabaseRequest(BaseModel):
-    """Request model for building SkNN encrypted database."""
-    image_dir: str = Field(..., description="Directory of images to index")
-    save_dir: str = Field(..., description="Directory to save encrypted database")
-    feature_dim: int = Field(default=2048, description="Feature dimension")
 
 
 class SknnSearchRequest(BaseModel):
@@ -237,39 +214,6 @@ async def initialize_service(
         "status": "success",
         "message": f"CIR service initialized with {architecture}-{pooling}"
     }
-
-
-@router.post("/index/build")
-async def build_index(request: BuildIndexRequest) -> Dict[str, Any]:
-    """Build feature index from a collection of images."""
-    service = get_cir_service()
-    result = service.build_index(
-        image_paths=request.image_paths,
-        image_ids=request.image_ids
-    )
-    if result.get("status") == "error":
-        raise HTTPException(status_code=500, detail=result.get("message"))
-    return result
-
-
-@router.post("/index/save")
-async def save_index(request: SaveIndexRequest) -> Dict[str, Any]:
-    """Save the current index to disk."""
-    service = get_cir_service()
-    result = service.save_index(request.save_dir)
-    if result.get("status") == "error":
-        raise HTTPException(status_code=500, detail=result.get("message"))
-    return result
-
-
-@router.post("/index/load")
-async def load_index(request: LoadIndexRequest) -> Dict[str, Any]:
-    """Load index from disk."""
-    service = get_cir_service()
-    result = service.load_index(request.index_dir)
-    if result.get("status") == "error":
-        raise HTTPException(status_code=500, detail=result.get("message"))
-    return result
 
 
 @router.post("/search")

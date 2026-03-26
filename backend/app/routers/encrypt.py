@@ -91,7 +91,7 @@ async def build_encrypted_database():
         dataset_service = get_dataset_service()
 
         # 构建数据库缓存
-        database_codes, database_labels = hash_cache.build_database_cache(
+        image_codes, text_codes, tags = hash_cache.build_full_database_cache(
             dcmh_service, dataset_service, batch_size=32, force_rebuild=False
         )
 
@@ -100,9 +100,9 @@ async def build_encrypted_database():
 
         return {
             "success": True,
-            "num_images": database_codes.shape[0],
+            "num_images": image_codes.shape[0],
             "bit_dim": dcmh_service.bit_dim,
-            "message": f"成功构建包含 {database_codes.shape[0]} 个图像的加密数据库"
+            "message": f"成功构建包含 {image_codes.shape[0]} 个图像的加密数据库"
         }
 
     except Exception as e:
