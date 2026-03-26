@@ -153,8 +153,8 @@ async def get_image(
             raise HTTPException(status_code=404, detail="Image not found in retrieval set")
 
         # 获取标签
-        tags = dataset_service.get_tags(np.array([image_id]))
-        labels = np.where(tags[0] > 0)[0].tolist() if tags is not None else []
+        tags_data = dataset_service.get_tags(np.array([image_id]))
+        tags = np.where(tags_data[0] > 0)[0].tolist() if tags_data is not None else []
 
         if format == "image":
             # 检查数据集类型
@@ -176,8 +176,8 @@ async def get_image(
         return {
             "success": True,
             "image_id": image_id,
-            "labels": labels[:20],
-            "total_labels": len(labels),
+            "tags": tags[:20],
+            "total_tags": len(tags),
             "thumbnail_url": thumbnail_url
         }
 

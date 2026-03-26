@@ -16,13 +16,13 @@ from .search import (
     TrapdoorResponse,
     SearchRequest,
     SearchResult,
-    ImageToLabelResult,
+    ImageToTagResult,
     EncryptionInfo,
     SearchResponse,
     MetricsRequest,
     MetricsResponse,
     SystemStatus,
-    LabelsResponse,
+    TagsResponse,
 )
 
 from .dataset import (

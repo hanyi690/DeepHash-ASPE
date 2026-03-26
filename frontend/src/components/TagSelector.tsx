@@ -7,29 +7,10 @@ import axios from 'axios';
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 interface TagSelectorProps {
-  /**
-   * 数据集名称
-   */
   dataset: 'flickr25k' | 'nuswide';
-
-  /**
-   * 已选择的标签索引列表
-   */
   selectedTags: number[];
-
-  /**
-   * 标签选择变化回调
-   */
   onChange: (tags: number[]) => void;
-
-  /**
-   * 是否禁用
-   */
   disabled?: boolean;
-
-  /**
-   * 占位符文本
-   */
   placeholder?: string;
 }
 
@@ -46,7 +27,6 @@ export default function TagSelector({
   disabled = false,
   placeholder = '搜索并选择标签...',
 }: TagSelectorProps) {
-  // 状态
   const [tagNames, setTagNames] = useState<string[]>([]);
   const [topTags, setTopTags] = useState<{ index: number; count: number }[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -60,7 +40,7 @@ export default function TagSelector({
       try {
         const response = await axios.get(`${API_BASE}/api/tags/names/${dataset}`);
         if (response.data.success) {
-          setTagNames(response.data.label_names || []);
+          setTagNames(response.data.tag_names || []);
         }
       } catch (error) {
         console.error('加载标签名称失败:', error);
@@ -78,7 +58,7 @@ export default function TagSelector({
       try {
         const response = await axios.get(`${API_BASE}/api/tags/stats`);
         if (response.data.success) {
-          setTopTags(response.data.top_labels || []);
+          setTopTags(response.data.top_tags || []);
         }
       } catch (error) {
         console.error('加载常用标签失败:', error);

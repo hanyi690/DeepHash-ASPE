@@ -33,12 +33,12 @@ FLICKR25K_CONFIG = {
     'query_size': 2000,
     'database_size': 18015,
 
-    # 类别名称
+    # 类别名称（按 LAll 索引顺序，与 mirflickr25k_annotations_v080 标注文件对应）
     'categories': [
-        'airplane', 'bird', 'boat', 'building', 'car', 'cat',
-        'dog', 'field', 'flower', 'food', 'grass', 'horse',
-        'mountain', 'person', 'sheep', 'sky', 'street', 'table',
-        'tower', 'tree', 'water', 'wave', 'window', 'woman'
+        'animals', 'baby', 'bird', 'car', 'clouds', 'dog',
+        'female', 'flower', 'food', 'indoor', 'lake', 'male',
+        'night', 'people', 'plant_life', 'portrait', 'river', 'sea',
+        'sky', 'structures', 'sunset', 'transport', 'tree', 'water'
     ],
 
     # 下载说明

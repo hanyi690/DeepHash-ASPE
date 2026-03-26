@@ -7,27 +7,34 @@ interface SearchResult {
   image_id: number;
   score: number;
   distance: number;
-  labels: number[];
-  label_names: string[];  // 标签名称
-  hit_labels: number[];  // 命中的查询标签索引
-  hit_label_names: string[];  // 命中的查询标签名称
+  tags: number[];
+  tag_names: string[];
+  hit_tags: number[];
+  hit_tag_names: string[];
   thumbnail_url?: string;
   hash_code?: number[];
+  category_hit?: boolean;  // LAll 类别是否命中
+  tag_hit?: boolean;  // YAll 标签是否命中
 }
 
 interface HitStats {
   total_results: number;
   hits: number;
   hit_rate: number;
-  query_label_count: number;
-  query_labels: number[];
-  query_label_names: string[];
+  query_tag_count: number;
+  query_tags: number[];
+  query_tag_names: string[];
+  // 新增：两种命中率
+  tag_hits: number;
+  tag_hit_rate: number;
+  category_hits: number;
+  category_hit_rate: number;
 }
 
 interface ResultsGridProps {
   results: SearchResult[];
   searchTime?: number;
-  hitStats?: HitStats;  // 命中率统计
+  hitStats?: HitStats;
 }
 
 export default function ResultsGrid({ results, searchTime, hitStats }: ResultsGridProps) {
@@ -54,17 +61,38 @@ export default function ResultsGrid({ results, searchTime, hitStats }: ResultsGr
               </span>
             </div>
             {hitStats && (
-              <div className="flex items-center space-x-2 text-sm">
-                <span className="text-gray-600">命中率:</span>
-                <span className={`font-bold ${
-                  hitStats.hit_rate >= 0.8 ? 'text-emerald-600' :
-                  hitStats.hit_rate >= 0.5 ? 'text-amber-600' : 'text-red-600'
-                }`}>
-                  {(hitStats.hit_rate * 100).toFixed(1)}%
-                </span>
-                <span className="text-gray-500">
-                  ({hitStats.hits}/{hitStats.total_results})
-                </span>
+              <div className="flex items-center space-x-4 text-sm">
+                {/* 标签命中率 */}
+                <div className="flex items-center space-x-1">
+                  <span className="text-gray-600">标签命中:</span>
+                  <span className={`font-bold ${
+                    hitStats.tag_hit_rate >= 0.8 ? 'text-emerald-600' :
+                    hitStats.tag_hit_rate >= 0.5 ? 'text-amber-600' : 'text-red-600'
+                  }`}>
+                    {(hitStats.tag_hit_rate * 100).toFixed(1)}%
+                  </span>
+                  <span className="text-gray-500 text-xs">
+                    ({hitStats.tag_hits}/{hitStats.total_results})
+                  </span>
+                </div>
+                {/* 类别命中率 */}
+                {hitStats.category_hits !== undefined && (
+                  <div className="flex items-center space-x-1">
+                    <span className="text-gray-600">类别命中:</span>
+                    <span className={`font-bold ${
+                      hitStats.category_hit_rate >= 0.8 ? 'text-emerald-600' :
+                      hitStats.category_hit_rate >= 0.5 ? 'text-amber-600' : 'text-red-600'
+                    }`}>
+                      {(hitStats.category_hit_rate * 100).toFixed(1)}%
+                    </span>
+                    <span className="text-gray-500 text-xs">
+                      ({hitStats.category_hits}/{hitStats.total_results})
+                    </span>
+                    <span className="text-gray-400 text-xs" title="与论文评估 mAP 对应">
+                      (评估)
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -75,11 +103,11 @@ export default function ResultsGrid({ results, searchTime, hitStats }: ResultsGr
       )}
 
       {/* 查询标签显示 */}
-      {hitStats && hitStats.query_label_names && hitStats.query_label_names.length > 0 && (
+      {hitStats && hitStats.query_tag_names && hitStats.query_tag_names.length > 0 && (
         <div className="mb-4 p-3 bg-[#6366F1]/5 border border-[#6366F1]/20 rounded-lg">
           <div className="flex items-center flex-wrap gap-2">
             <span className="text-sm text-gray-600">查询标签:</span>
-            {hitStats.query_label_names.map((name, idx) => (
+            {hitStats.query_tag_names.map((name, idx) => (
               <span
                 key={idx}
                 className="px-2 py-1 bg-[#6366F1]/10 text-[#6366F1] rounded text-sm font-medium"
@@ -109,9 +137,22 @@ export default function ResultsGrid({ results, searchTime, hitStats }: ResultsGr
                   图像 {result.image_id}
                 </span>
               </div>
-              <span className="badge-neutral font-mono text-xs">
-                距离：{result.distance.toFixed(2)}
-              </span>
+              <div className="flex items-center space-x-2">
+                {/* 命中指示器 */}
+                {result.category_hit && (
+                  <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs font-medium">
+                    类别命中
+                  </span>
+                )}
+                {result.tag_hit && !result.category_hit && (
+                  <span className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-xs font-medium">
+                    标签命中
+                  </span>
+                )}
+                <span className="badge-neutral font-mono text-xs">
+                  距离：{result.distance.toFixed(2)}
+                </span>
+              </div>
             </div>
 
             {/* 图像区域 */}
@@ -122,7 +163,6 @@ export default function ResultsGrid({ results, searchTime, hitStats }: ResultsGr
                   alt={`结果 ${result.rank}`}
                   className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-300"
                   onError={(e) => {
-                    // 图像加载失败时显示占位符
                     (e.target as HTMLImageElement).style.display = 'none';
                   }}
                 />
@@ -192,7 +232,7 @@ export default function ResultsGrid({ results, searchTime, hitStats }: ResultsGr
             )}
 
             {/* 标签名称显示 */}
-            {result.label_names && result.label_names.length > 0 && (
+            {result.tag_names && result.tag_names.length > 0 && (
               <div className="pt-3 border-t border-gray-100">
                 <p className="text-xs text-gray-500 mb-2 flex items-center">
                   <svg className="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -201,9 +241,8 @@ export default function ResultsGrid({ results, searchTime, hitStats }: ResultsGr
                   标签
                 </p>
                 <div className="flex flex-wrap gap-1">
-                  {result.label_names.slice(0, 10).map((name, i) => {
-                    // 检查是否为命中标签
-                    const isHit = result.hit_label_names && result.hit_label_names.includes(name);
+                  {result.tag_names.slice(0, 10).map((name, i) => {
+                    const isHit = result.hit_tag_names && result.hit_tag_names.includes(name);
                     return (
                       <span
                         key={i}
@@ -218,44 +257,44 @@ export default function ResultsGrid({ results, searchTime, hitStats }: ResultsGr
                       </span>
                     );
                   })}
-                  {result.label_names.length > 10 && (
+                  {result.tag_names.length > 10 && (
                     <span className="px-2 py-0.5 text-gray-400 text-xs">
-                      +{result.label_names.length - 10} 更多
+                      +{result.tag_names.length - 10} 更多
                     </span>
                   )}
                 </div>
                 {/* 命中统计 */}
-                {result.hit_label_names && result.hit_label_names.length > 0 && (
+                {result.hit_tag_names && result.hit_tag_names.length > 0 && (
                   <p className="text-xs text-emerald-600 mt-2">
-                    命中 {result.hit_label_names.length} 个查询标签
+                    命中 {result.hit_tag_names.length} 个查询标签
                   </p>
                 )}
               </div>
             )}
 
             {/* 标签索引（折叠显示） */}
-            {result.labels && result.labels.length > 0 && (
+            {result.tags && result.tags.length > 0 && (
               <div className="pt-3 border-t border-gray-100">
                 <details className="text-xs">
                   <summary className="text-gray-500 cursor-pointer hover:text-gray-700">
-                    标签索引 (YAll): {result.labels.length} 个
+                    标签索引 (YAll): {result.tags.length} 个
                   </summary>
                   <div className="mt-2 flex flex-wrap gap-1">
-                    {result.labels.slice(0, 20).map((label, i) => (
+                    {result.tags.slice(0, 20).map((tag, i) => (
                       <span
                         key={i}
                         className={`px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs font-mono ${
-                          result.hit_labels && result.hit_labels.includes(label)
+                          result.hit_tags && result.hit_tags.includes(tag)
                             ? 'ring-1 ring-emerald-400'
                             : ''
                         }`}
                       >
-                        {label}
+                        {tag}
                       </span>
                     ))}
-                    {result.labels.length > 20 && (
+                    {result.tags.length > 20 && (
                       <span className="px-2 py-0.5 text-gray-400 text-xs">
-                        +{result.labels.length - 20}
+                        +{result.tags.length - 20}
                       </span>
                     )}
                   </div>

@@ -4,8 +4,12 @@ echo   DeepHash-ASPE Demo - Quick Start
 echo ============================================
 echo.
 
+REM Get script directory
+set "SCRIPT_DIR=%~dp0"
+cd /d "%SCRIPT_DIR%"
+
 REM Check Python
-echo [1/3] Checking Python...
+echo [1/4] Checking Python...
 python --version >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Python not found. Please install Python.
@@ -14,13 +18,22 @@ if errorlevel 1 (
 )
 echo [OK] Python found
 
+REM Activate virtual environment
+echo [2/4] Activating virtual environment...
+if exist "%SCRIPT_DIR%.venv\Scripts\activate.bat" (
+    call "%SCRIPT_DIR%.venv\Scripts\activate.bat"
+    echo [OK] Virtual environment activated
+) else (
+    echo [WARN] Virtual environment not found, using system Python
+)
+
 REM Start backend in new window
-echo [2/3] Starting backend server...
-start "DeepHash-ASPE Backend" cmd /k "cd /d %~dp0backend && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+echo [3/4] Starting backend server...
+start "DeepHash-ASPE Backend" cmd /k "cd /d "%SCRIPT_DIR%backend" && call "%SCRIPT_DIR%.venv\Scripts\activate.bat" && python -m uvicorn app.main:app --host 0.0.0.0 --port 8000"
 echo [OK] Backend started (port 8000)
 
 REM Check Node.js
-echo [3/3] Checking Node.js...
+echo [4/4] Checking Node.js...
 node --version >nul 2>&1
 if errorlevel 1 (
     echo [WARN] Node.js not found. Frontend will not start.
@@ -30,10 +43,9 @@ if errorlevel 1 (
 )
 
 REM Start frontend in new window
-cd /d %~dp0frontend
 echo [OK] Node.js found
 echo Starting frontend...
-start "DeepHash-ASPE Frontend" cmd /k "cd /d %~dp0frontend && npm run dev"
+start "DeepHash-ASPE Frontend" cmd /k "cd /d "%SCRIPT_DIR%frontend" && npm run dev"
 echo [OK] Frontend started (port 3000)
 
 echo.

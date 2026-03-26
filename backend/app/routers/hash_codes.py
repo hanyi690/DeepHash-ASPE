@@ -81,24 +81,24 @@ async def generate_text_hash(text_data: dict):
 
         # 获取标签维度
         tags = dataset_service.get_tags()
-        label_dim = tags.shape[1] if tags is not None else 1386
+        tag_dim = tags.shape[1] if tags is not None else 1386
 
         # 解析输入
-        if "label_indices" in text_data:
+        if "tag_indices" in text_data:
             # 从标签索引构建向量
-            label_indices = text_data["label_indices"]
-            label_vector = np.zeros(label_dim, dtype=np.float32)
-            for idx in label_indices:
-                if 0 <= idx < label_dim:
-                    label_vector[idx] = 1.0
-            text_tensor = torch.from_numpy(label_vector).unsqueeze(0).float()
+            tag_indices = text_data["tag_indices"]
+            tag_vector = np.zeros(tag_dim, dtype=np.float32)
+            for idx in tag_indices:
+                if 0 <= idx < tag_dim:
+                    tag_vector[idx] = 1.0
+            text_tensor = torch.from_numpy(tag_vector).unsqueeze(0).float()
         elif "vector" in text_data:
             vector_data = text_data["vector"]
             text_tensor = torch.tensor(vector_data).unsqueeze(0).float()
         else:
             return HashCodeResponse(
                 success=False,
-                message="必须提供 label_indices 或 vector"
+                message="必须提供 tag_indices 或 vector"
             )
 
         # 生成哈希码

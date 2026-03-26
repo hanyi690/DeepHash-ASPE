@@ -8,13 +8,13 @@
 from fastapi import APIRouter, Query
 
 from app.services.dataset_service import get_dataset_service, DATASET_CONFIGS
-from app.data.label_names import get_label_names, get_label_name, LABELS
+from app.data.tag_names import get_tag_names, get_tag_name, TAGS
 
 router = APIRouter(prefix="/api/tags", tags=["tags"])
 
 
 @router.get("")
-async def get_labels(dataset: str = Query(default="flickr25k", description="数据集名称")):
+async def get_tags(dataset: str = Query(default="flickr25k", description="数据集名称")):
     """
     返回数据集标签信息。
 
@@ -30,33 +30,33 @@ async def get_labels(dataset: str = Query(default="flickr25k", description="数�
 
         # 获取标签维度
         tags = dataset_service.get_tags()
-        label_dim = tags.shape[1] if tags is not None else 1386
+        tag_dim = tags.shape[1] if tags is not None else 1386
 
         # 获取总图像数
         total_images = dataset_service.get_image_count()
 
         # 获取标签统计信息
-        label_counts = tags.sum(axis=0).tolist() if tags is not None else []
+        tag_counts = tags.sum(axis=0).tolist() if tags is not None else []
 
         return {
             "success": True,
             "total": total_images,
-            "label_dim": label_dim,
-            "label_counts": label_counts[:100] if label_counts else [],
-            "message": f"{dataset} 数据集包含 {total_images} 张图像，标签向量维度为 {label_dim}"
+            "tag_dim": tag_dim,
+            "tag_counts": tag_counts[:100] if tag_counts else [],
+            "message": f"{dataset} 数据集包含 {total_images} 张图像，标签向量维度为 {tag_dim}"
         }
 
     except Exception as e:
         return {
             "success": False,
             "total": 0,
-            "label_dim": 1386,
+            "tag_dim": 1386,
             "message": f"获取标签信息失败：{str(e)}"
         }
 
 
 @router.get("/stats")
-async def get_label_stats(dataset: str = Query(default="flickr25k", description="数据集名称")):
+async def get_tag_stats(dataset: str = Query(default="flickr25k", description="数据集名称")):
     """
     返回标签统计信息。
 
@@ -79,22 +79,22 @@ async def get_label_stats(dataset: str = Query(default="flickr25k", description=
             }
 
         # 计算统计信息
-        label_counts = tags.sum(axis=0)
+        tag_counts = tags.sum(axis=0)
         total_samples = tags.shape[0]
 
         # 找出最常见的标签
-        top_indices = label_counts.argsort()[-20:][::-1].tolist()
-        top_counts = label_counts[top_indices].tolist()
+        top_indices = tag_counts.argsort()[-20:][::-1].tolist()
+        top_counts = tag_counts[top_indices].tolist()
 
         # 标签密度
-        avg_labels_per_sample = tags.sum() / total_samples
+        avg_tags_per_sample = tags.sum() / total_samples
 
         return {
             "success": True,
             "total_samples": total_samples,
-            "label_dim": tags.shape[1],
-            "avg_labels_per_sample": float(avg_labels_per_sample),
-            "top_labels": [
+            "tag_dim": tags.shape[1],
+            "avg_tags_per_sample": float(avg_tags_per_sample),
+            "top_tags": [
                 {"index": idx, "count": int(count)}
                 for idx, count in zip(top_indices, top_counts)
             ],
@@ -109,7 +109,7 @@ async def get_label_stats(dataset: str = Query(default="flickr25k", description=
 
 
 @router.get("/names/{dataset}")
-async def get_dataset_label_names(dataset: str):
+async def get_dataset_tag_names(dataset: str):
     """
     返回指定数据集的标签名称列表（YAll 索引顺序）。
 
@@ -142,51 +142,51 @@ async def get_dataset_label_names(dataset: str):
                 return {
                     "success": True,
                     "dataset": dataset_lower,
-                    "label_names": tag_mapping.tolist(),
+                    "tag_names": tag_mapping.tolist(),
                     "total": len(tag_mapping),
                     "source": "yall_mapping",
                     "message": f"获取 {dataset_lower} 标签名称成功（YAll 顺序），共 {len(tag_mapping)} 个标签"
                 }
 
             # 回退到原始 common_tags 顺序
-            tag_names = dataset_service.get_tag_names()
-            if tag_names:
+            tag_names_list = dataset_service.get_tag_names()
+            if tag_names_list:
                 return {
                     "success": True,
                     "dataset": dataset_lower,
-                    "label_names": tag_names,
-                    "total": len(tag_names),
+                    "tag_names": tag_names_list,
+                    "total": len(tag_names_list),
                     "source": "common_tags",
-                    "message": f"获取 {dataset_lower} 标签名称成功，共 {len(tag_names)} 个标签"
+                    "message": f"获取 {dataset_lower} 标签名称成功，共 {len(tag_names_list)} 个标签"
                 }
     except Exception as e:
         # 回退到预定义列表
         pass
 
     # 使用预定义标签名
-    label_names = get_label_names(dataset_lower)
+    tag_names_list = get_tag_names(dataset_lower)
 
-    if not label_names:
+    if not tag_names_list:
         return {
             "success": False,
             "dataset": dataset,
-            "label_names": [],
+            "tag_names": [],
             "total": 0,
-            "message": f"不支持的数据集: {dataset}，支持的数据集: {list(LABELS.keys())}"
+            "message": f"不支持的数据集: {dataset}，支持的数据集: {list(TAGS.keys())}"
         }
 
     return {
         "success": True,
         "dataset": dataset_lower,
-        "label_names": label_names,
-        "total": len(label_names),
+        "tag_names": tag_names_list,
+        "total": len(tag_names_list),
         "source": "predefined",
-        "message": f"获取 {dataset_lower} 标签名称成功，共 {len(label_names)} 个标签"
+        "message": f"获取 {dataset_lower} 标签名称成功，共 {len(tag_names_list)} 个标签"
     }
 
 
 @router.get("/names/{dataset}/{index}")
-async def get_single_label_name(dataset: str, index: int):
+async def get_single_tag_name(dataset: str, index: int):
     """
     返回指定数据集中某个索引的标签名称。
 
@@ -198,10 +198,10 @@ async def get_single_label_name(dataset: str, index: int):
         标签名称
     """
     dataset_lower = dataset.lower()
-    label_name = get_label_name(dataset_lower, index)
+    tag_name = get_tag_name(dataset_lower, index)
 
-    label_names = get_label_names(dataset_lower)
-    if not label_names:
+    tag_names_list = get_tag_names(dataset_lower)
+    if not tag_names_list:
         return {
             "success": False,
             "dataset": dataset,
@@ -210,20 +210,20 @@ async def get_single_label_name(dataset: str, index: int):
             "message": f"不支持的数据集: {dataset}"
         }
 
-    if index < 0 or index >= len(label_names):
+    if index < 0 or index >= len(tag_names_list):
         return {
             "success": False,
             "dataset": dataset_lower,
             "index": index,
             "name": None,
-            "message": f"索引 {index} 超出范围 (0-{len(label_names)-1})"
+            "message": f"索引 {index} 超出范围 (0-{len(tag_names_list)-1})"
         }
 
     return {
         "success": True,
         "dataset": dataset_lower,
         "index": index,
-        "name": label_name,
+        "name": tag_name,
         "message": "获取标签名称成功"
     }
 
@@ -238,12 +238,12 @@ async def get_supported_datasets():
         "datasets": [
             {
                 "name": "flickr25k",
-                "label_count": len(LABELS.get("flickr25k", [])),
+                "tag_count": len(TAGS.get("flickr25k", [])),
                 "description": "Flickr25K 数据集"
             },
             {
                 "name": "nuswide",
-                "label_count": len(LABELS.get("nuswide", [])),
+                "tag_count": len(TAGS.get("nuswide", [])),
                 "description": "NUS-WIDE 数据集"
             }
         ],

@@ -5,7 +5,7 @@
 支持多数据集切换。
 
 关键改进：
-- 双向检索：label_to_image 和 image_to_label
+- 双向检索：tag_to_image 和 image_to_tag
 - 使用正确的数据库（图像哈希码 vs 文本哈希码）
 - 正确的图像预处理
 """
@@ -22,8 +22,9 @@ from app.schemas.search import (
     SearchResponse,
     SearchResult,
     EncryptionInfo,
-    ImageToLabelResult,
-    DCMH_DATASETS
+    ImageToTagResult,
+    DCMH_DATASETS,
+    HitStats
 )
 from app.services.aspe_service import get_aspe_service
 from app.services.dcmh_service import get_dcmh_service
@@ -62,12 +63,12 @@ async def ensure_cache_initialized(dataset: str = "flickr25k"):
             logger.warning("DCMH 模型未加载，将使用随机哈希码")
 
         # 尝试加载完整的数据库缓存
-        image_codes, text_codes, labels = hash_cache.load_full_database(dataset)
+        image_codes, text_codes, tags = hash_cache.load_full_database(dataset)
 
         if image_codes is not None:
             hash_cache.database_codes = image_codes
             hash_cache.database_text_codes = text_codes
-            hash_cache.database_labels = labels
+            hash_cache.database_tags = tags
 
             # 加密数据库
             if hash_cache.dcmh_cache_exists(dataset, "encrypted"):
@@ -76,14 +77,14 @@ async def ensure_cache_initialized(dataset: str = "flickr25k"):
                     hash_cache.encrypted_database = encrypted
                     aspe_service.encrypted_database = encrypted
                     aspe_service.database_codes = image_codes
-                    aspe_service.database_labels = labels
+                    aspe_service.database_tags = tags
             else:
                 # 加密数据库
-                encrypted = aspe_service.encrypt_database(image_codes, labels)
+                encrypted = aspe_service.encrypt_database(image_codes, tags)
                 hash_cache.encrypted_database = encrypted
 
             aspe_service.database_codes = image_codes
-            aspe_service.database_labels = labels
+            aspe_service.database_tags = tags
 
             logger.info(f"[DCMH] 缓存已加载 ({dataset})：图像 {image_codes.shape[0]} 条，"
                        f"文本 {text_codes.shape[0] if text_codes is not None else 0} 条")
@@ -102,8 +103,8 @@ async def search(request: SearchRequest):
     执行跨模态检索。
 
     支持：
-    - label_to_image: 标签→图像检索（使用图像哈希码数据库）
-    - image_to_label: 图像→标签检索（使用文本哈希码数据库）
+    - tag_to_image: 标签→图像检索（使用图像哈希码数据库）
+    - image_to_tag: 图像→标签检索（使用文本哈希码数据库）
     - 多数据集切换（flickr25k, nuswide）
     - 加密/明文检索
     """
@@ -137,15 +138,15 @@ async def search(request: SearchRequest):
         # 生成查询哈希码
         query_code_np = None
         database_codes = None  # 用于检索的数据库
-        query_label_names = []  # 查询标签名称列表
+        query_tag_names = []  # 查询标签名称列表
 
-        if request.query_type == "label_to_image" or request.query_type == "label":
+        if request.query_type == "tag_to_image" or request.query_type == "tag":
             # ========== 标签→图像检索 ==========
-            if not request.label_indices:
+            if not request.tag_indices:
                 return SearchResponse(
                     success=False,
-                    query_type="label_to_image",
-                    label_indices=[],
+                    query_type="tag_to_image",
+                    tag_indices=[],
                     results=[],
                     total_results=0,
                     search_time_ms=0
@@ -153,24 +154,24 @@ async def search(request: SearchRequest):
 
             # 前端返回的是 YAll 索引，直接构建 1386 维 multi-hot 向量
             # 不从 common_tags.txt 加载，使用固定维度
-            label_dim = 1386
-            label_vector = np.zeros(label_dim, dtype=np.float32)
-            for idx in request.label_indices:
-                if 0 <= idx < label_dim:
-                    label_vector[idx] = 1.0
+            tag_dim = 1386
+            tag_vector = np.zeros(tag_dim, dtype=np.float32)
+            for idx in request.tag_indices:
+                if 0 <= idx < tag_dim:
+                    tag_vector[idx] = 1.0
 
             # 生成文本哈希码
-            text_tensor = torch.from_numpy(label_vector).unsqueeze(0).float()
+            text_tensor = torch.from_numpy(tag_vector).unsqueeze(0).float()
             query_code = dcmh_service.generate_text_code_single(text_tensor)
             query_code_np = query_code.cpu().numpy().squeeze()
 
             # 使用图像哈希码数据库进行检索
             database_codes = hash_cache.database_codes
 
-            logger.info(f"[搜索] 标签→图像：label_indices={request.label_indices}, "
+            logger.info(f"[搜索] 标签→图像：tag_indices={request.tag_indices}, "
                        f"query_code shape={query_code_np.shape}, db shape={database_codes.shape if database_codes is not None else None}")
 
-        elif request.query_type == "image_to_label":
+        elif request.query_type == "image_to_tag":
             # ========== 图像→标签检索 ==========
             if request.query_image:
                 # 处理 base64 图像
@@ -180,8 +181,8 @@ async def search(request: SearchRequest):
             else:
                 return SearchResponse(
                     success=False,
-                    query_type="image_to_label",
-                    label_indices=[],
+                    query_type="image_to_tag",
+                    tag_indices=[],
                     results=[],
                     total_results=0,
                     search_time_ms=0,
@@ -194,8 +195,8 @@ async def search(request: SearchRequest):
             if database_codes is None:
                 return SearchResponse(
                     success=False,
-                    query_type="image_to_label",
-                    label_indices=[],
+                    query_type="image_to_tag",
+                    tag_indices=[],
                     results=[],
                     total_results=0,
                     search_time_ms=0,
@@ -209,11 +210,11 @@ async def search(request: SearchRequest):
             return SearchResponse(
                 success=False,
                 query_type=request.query_type,
-                label_indices=request.label_indices,
+                tag_indices=request.tag_indices,
                 results=[],
                 total_results=0,
                 search_time_ms=0,
-                message=f"不支持的查询类型：{request.query_type}，支持的类型：label_to_image, image_to_label"
+                message=f"不支持的查询类型：{request.query_type}，支持的类型：tag_to_image, image_to_tag"
             )
 
         # 检查数据库
@@ -221,7 +222,7 @@ async def search(request: SearchRequest):
             return SearchResponse(
                 success=False,
                 query_type=request.query_type,
-                label_indices=request.label_indices,
+                tag_indices=request.tag_indices,
                 results=[],
                 total_results=0,
                 search_time_ms=0,
@@ -261,13 +262,16 @@ async def search(request: SearchRequest):
         _, _, retrieval_indices = dataset_service.get_data_split_indices()
 
         # 获取检索库标签
-        retrieval_labels = dataset_service.get_yall(retrieval_indices)
+        retrieval_tags = dataset_service.get_yall(retrieval_indices)
+
+        # 加载 LAll 类别标签（用于类别命中率计算）
+        retrieval_lall = hash_cache.load_dcmh_lall(dataset)
 
         # 根据查询类型构建结果
         results: List[SearchResult] = []
-        label_results: List[ImageToLabelResult] = []
+        tag_results: List[ImageToTagResult] = []
 
-        if request.query_type == "image_to_label":
+        if request.query_type == "image_to_tag":
             # ========== 图像→标签检索：返回相似图像的标签 ==========
             for rank, idx in enumerate(top_k_indices):
                 # 获取实际图像索引
@@ -275,36 +279,55 @@ async def search(request: SearchRequest):
                 image_id = int(actual_idx)
 
                 # 获取该图像的标签索引列表 (YAll 索引)
-                image_labels = []
-                if retrieval_labels is not None and idx < len(retrieval_labels):
-                    label_row = retrieval_labels[idx]
-                    image_labels = np.where(label_row > 0)[0].tolist()
+                image_tags = []
+                if retrieval_tags is not None and idx < len(retrieval_tags):
+                    tag_row = retrieval_tags[idx]
+                    image_tags = np.where(tag_row > 0)[0].tolist()
 
                 # 获取标签名称
-                label_names = dataset_service.get_label_names_from_yall_indices(image_labels[:20])
+                tag_names = dataset_service.get_tag_names_from_yall_indices(image_tags[:20])
 
-                label_results.append(ImageToLabelResult(
+                # 生成来源图像缩略图 URL
+                thumbnail_url = f"/api/images/{image_id}?format=image&dataset={request.dataset}"
+
+                tag_results.append(ImageToTagResult(
                     rank=rank + 1,
                     image_id=image_id,
-                    labels=image_labels[:20] if image_labels else [],
-                    label_names=label_names,
+                    tags=image_tags[:20] if image_tags else [],
+                    tag_names=tag_names,
                     score=float(1.0 / (1.0 + distances_flat[idx])),
-                    distance=float(distances_flat[idx])
+                    distance=float(distances_flat[idx]),
+                    thumbnail_url=thumbnail_url
                 ))
 
             # 图像→标签检索的统计
             hit_stats = None
         else:
             # ========== 标签→图像检索：返回图像结果 ==========
-            # 前端发送的 label_indices 已经是 YAll 索引，直接使用
-            query_yall_indices = set(request.label_indices)
+            # 前端发送的 tag_indices 已经是 YAll 索引，直接使用
+            query_yall_indices = set(request.tag_indices)
 
             # 获取查询标签名称
-            query_label_names = dataset_service.get_label_names_from_yall_indices(list(query_yall_indices))
+            query_tag_names = dataset_service.get_tag_names_from_yall_indices(list(query_yall_indices))
+
+            # 根据查询的 YAll 索引获取对应的 LAll 向量
+            # 找到包含这些 YAll 标签的图像，取其 LAll 的并集
+            query_lall_vector = None
+            if retrieval_lall is not None and retrieval_tags is not None:
+                # 找到包含任意查询标签的图像
+                mask = np.zeros(len(retrieval_tags), dtype=bool)
+                for tag_idx in query_yall_indices:
+                    if tag_idx < retrieval_tags.shape[1]:
+                        mask |= (retrieval_tags[:, tag_idx] > 0)
+
+                # 获取这些图像的 LAll，取并集
+                matching_lall = retrieval_lall[mask]
+                if len(matching_lall) > 0:
+                    query_lall_vector = matching_lall.max(axis=0)
 
             # 统计命中数
-            total_hits = 0
-            total_query_labels = len(query_yall_indices)
+            total_tag_hits = 0
+            total_category_hits = 0
 
             for rank, idx in enumerate(top_k_indices):
                 # 获取实际图像索引
@@ -312,52 +335,72 @@ async def search(request: SearchRequest):
                 image_id = int(actual_idx)
 
                 # 获取该图像的标签索引列表 (YAll 索引)
-                image_labels = []
-                if retrieval_labels is not None and idx < len(retrieval_labels):
-                    label_row = retrieval_labels[idx]
-                    image_labels = np.where(label_row > 0)[0].tolist()
+                image_tags = []
+                if retrieval_tags is not None and idx < len(retrieval_tags):
+                    tag_row = retrieval_tags[idx]
+                    image_tags = np.where(tag_row > 0)[0].tolist()
 
-                # 计算命中标签（检索结果中包含的查询标签）
-                hit_labels = [l for l in image_labels if l in query_yall_indices]
+                # 计算命中标签（检索结果中包含的查询标签）- YAll 命中
+                hit_tags = [t for t in image_tags if t in query_yall_indices]
+                tag_hit = len(hit_tags) > 0
+
+                # 计算 LAll 类别命中
+                category_hit = False
+                if retrieval_lall is not None and query_lall_vector is not None and idx < len(retrieval_lall):
+                    # 如果结果图像的 LAll 与查询 LAll 有交集，则类别命中
+                    result_lall = retrieval_lall[idx]
+                    # 检查是否有共同的类别
+                    category_hit = np.any((result_lall > 0) & (query_lall_vector > 0))
 
                 # 获取标签名称
-                label_names = dataset_service.get_label_names_from_yall_indices(image_labels[:20])
-                hit_label_names = dataset_service.get_label_names_from_yall_indices(hit_labels)
+                tag_names = dataset_service.get_tag_names_from_yall_indices(image_tags[:20])
+                hit_tag_names = dataset_service.get_tag_names_from_yall_indices(hit_tags)
 
                 # 统计命中
-                if hit_labels:
-                    total_hits += 1
+                if tag_hit:
+                    total_tag_hits += 1
+                if category_hit:
+                    total_category_hits += 1
 
                 # 获取结果哈希码
                 result_hash_code = None
                 if database_codes is not None and idx < len(database_codes):
                     result_hash_code = database_codes[idx].tolist()
 
-                # 生成图像 URL（使用 clean_id 映射获取原始图像 ID）
-                original_id = dataset_service.get_original_image_id(image_id)
-                thumbnail_url = f"/flickr-images/im{original_id + 1}.jpg"
+                # 生成缩略图 URL（从 .mat 文件加载图像）
+                thumbnail_url = f"/api/images/{image_id}?format=image&dataset={request.dataset}"
 
                 results.append(SearchResult(
                     rank=rank + 1,
                     image_id=image_id,
                     score=float(1.0 / (1.0 + distances_flat[idx])),
                     distance=float(distances_flat[idx]),
-                    labels=image_labels[:20] if image_labels else [],
-                    label_names=label_names,
-                    hit_labels=hit_labels,
-                    hit_label_names=hit_label_names,
+                    tags=image_tags[:20] if image_tags else [],
+                    tag_names=tag_names,
+                    hit_tags=hit_tags,
+                    hit_tag_names=hit_tag_names,
                     thumbnail_url=thumbnail_url,
-                    hash_code=result_hash_code
+                    hash_code=result_hash_code,
+                    category_hit=category_hit,
+                    tag_hit=tag_hit
                 ))
 
-            # 计算命中率统计
+            # 计算命中率统计（包含两种命中率）
             hit_stats = {
                 "total_results": len(results),
-                "hits": total_hits,
-                "hit_rate": total_hits / len(results) if results else 0,
-                "query_label_count": total_query_labels,
-                "query_labels": list(query_yall_indices),
-                "query_label_names": query_label_names
+                # 标签命中（YAll）
+                "tag_hits": total_tag_hits,
+                "tag_hit_rate": total_tag_hits / len(results) if results else 0,
+                # 类别命中（LAll）- 与评估 mAP 对应
+                "category_hits": total_category_hits,
+                "category_hit_rate": total_category_hits / len(results) if results else 0,
+                # 查询信息
+                "query_tags": list(query_yall_indices),
+                "query_tag_names": query_tag_names,
+                # 兼容旧字段
+                "hits": total_tag_hits,
+                "hit_rate": total_tag_hits / len(results) if results else 0,
+                "query_tag_count": len(query_yall_indices)
             }
 
         search_time_ms = (time.time() - start_time) * 1000
@@ -365,11 +408,11 @@ async def search(request: SearchRequest):
         return SearchResponse(
             success=True,
             query_type=request.query_type,
-            label_indices=request.label_indices,
-            query_label_names=query_label_names if request.query_type != "image_to_label" else [],
+            tag_indices=request.tag_indices,
+            query_tag_names=query_tag_names if request.query_type != "image_to_tag" else [],
             results=results,
-            label_results=label_results,
-            total_results=len(results) + len(label_results),
+            tag_results=tag_results,
+            total_results=len(results) + len(tag_results),
             search_time_ms=search_time_ms,
             hit_stats=hit_stats,
             encryption_info=encryption_info,
@@ -391,7 +434,7 @@ async def _build_database_from_real_data(dataset: str = "flickr25k"):
 
     try:
         # 构建完整的数据库缓存
-        image_codes, text_codes, labels = hash_cache.build_full_database_cache(
+        image_codes, text_codes, tags = hash_cache.build_full_database_cache(
             dcmh_service, dataset_service, batch_size=32, force_rebuild=False, dataset=dataset
         )
 
@@ -415,10 +458,10 @@ async def _build_demo_database(dataset: str = "flickr25k"):
     demo_hash_codes = np.sign(np.random.randn(num_images, dcmh_service.bit_dim))
 
     # 生成随机标签
-    labels = np.random.randint(0, 2, (num_images, 10)).astype(np.float32)
+    tags = np.random.randint(0, 2, (num_images, 10)).astype(np.float32)
 
     # 加密
-    aspe_service.encrypt_database(demo_hash_codes, labels)
+    aspe_service.encrypt_database(demo_hash_codes, tags)
 
     # 缓存数据库代码用于明文检索
     aspe_service.database_codes = demo_hash_codes
@@ -465,7 +508,7 @@ def _process_base64_image(base64_str: str, dcmh_service, dataset_service) -> np.
 
 @router.get("/demo")
 async def demo_search(
-    label_indices: str = "0,5,10",
+    tag_indices: str = "0,5,10",
     top_k: int = 5,
     dataset: str = Query(default="flickr25k", description="数据集名称")
 ):
@@ -473,18 +516,18 @@ async def demo_search(
     演示搜索（简化版本）。
 
     参数：
-    - label_indices: 逗号分隔的标签索引，例如 "0,5,10"
+    - tag_indices: 逗号分隔的标签索引，例如 "0,5,10"
     - top_k: 返回的结果数量
     - dataset: 数据集名称
     """
     try:
         # 解析标签索引
-        indices = [int(x.strip()) for x in label_indices.split(",") if x.strip().isdigit()]
+        indices = [int(x.strip()) for x in tag_indices.split(",") if x.strip().isdigit()]
 
         # 创建搜索请求
         request = SearchRequest(
-            query_type="label",
-            label_indices=indices,
+            query_type="tag",
+            tag_indices=indices,
             dataset=dataset,
             top_k=top_k,
             use_encrypted=True
@@ -544,7 +587,7 @@ async def rebuild_cache(
             return {"success": False, "message": "DCMH 模型未加载"}
 
         # 重建完整的数据库缓存
-        image_codes, text_codes, labels = hash_cache.build_full_database_cache(
+        image_codes, text_codes, tags = hash_cache.build_full_database_cache(
             dcmh_service, dataset_service, batch_size=32, force_rebuild=True, dataset=dataset
         )
 

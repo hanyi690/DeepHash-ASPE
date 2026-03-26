@@ -89,17 +89,17 @@ if __name__ == "__main__":
 
     # 测试前向传播
     batch_size = 4
-    dummy_labels = torch.zeros(batch_size, 1, y_dim, 1)
+    dummy_tags = torch.zeros(batch_size, 1, y_dim, 1)
     for i in range(batch_size):
         num_active = torch.randint(1, 10, (1,)).item()
         active_indices = torch.randperm(y_dim)[:num_active]
-        dummy_labels[i, 0, active_indices, 0] = 1.0
+        dummy_tags[i, 0, active_indices, 0] = 1.0
 
-    print(f"\n输入形状：{dummy_labels.shape}")
+    print(f"\n输入形状：{dummy_tags.shape}")
     print(f"标签维度：{y_dim}")
     print(f"哈希码位数：{bit}")
 
-    output = model(dummy_labels)
+    output = model(dummy_tags)
     print(f"输出形状：{output.shape}")
     print(f"输出范围：[{output.min():.4f}, {output.max():.4f}]")
 

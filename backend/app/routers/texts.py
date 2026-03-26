@@ -17,18 +17,18 @@ from app.services.dataset_service import get_dataset_service
 router = APIRouter(prefix="/api/texts", tags=["texts"])
 
 
-class LabelVectorRequest(BaseModel):
+class TagVectorRequest(BaseModel):
     """标签向量请求。"""
-    label_indices: List[int] = Field(..., description="标签索引列表")
+    tag_indices: List[int] = Field(..., description="标签索引列表")
 
 
 @router.post("/hash", response_model=HashCodeResponse)
-async def generate_label_hash(label_indices: List[int]):
+async def generate_tag_hash(tag_indices: List[int]):
     """
     从标签索引生成哈希码。
 
     参数：
-    - label_indices: 标签索引列表，例如 [0, 5, 10]
+    - tag_indices: 标签索引列表，例如 [0, 5, 10]
 
     返回：
     - 哈希码
@@ -40,16 +40,16 @@ async def generate_label_hash(label_indices: List[int]):
 
         # 获取标签维度
         tags = dataset_service.get_tags()
-        label_dim = tags.shape[1] if tags is not None else 1386
+        tag_dim = tags.shape[1] if tags is not None else 1386
 
         # 构建 multi-hot 向量
-        label_vector = np.zeros(label_dim, dtype=np.float32)
-        for idx in label_indices:
-            if 0 <= idx < label_dim:
-                label_vector[idx] = 1.0
+        tag_vector = np.zeros(tag_dim, dtype=np.float32)
+        for idx in tag_indices:
+            if 0 <= idx < tag_dim:
+                tag_vector[idx] = 1.0
 
         # 转换为张量
-        text_tensor = torch.from_numpy(label_vector).unsqueeze(0).float()
+        text_tensor = torch.from_numpy(tag_vector).unsqueeze(0).float()
 
         # 生成哈希码
         hash_code = dcmh_service.generate_text_code_single(text_tensor)
@@ -59,7 +59,7 @@ async def generate_label_hash(label_indices: List[int]):
             success=True,
             hash_code=hash_code_list,
             bit_dim=dcmh_service.bit_dim,
-            message=f"成功从 {len(label_indices)} 个标签生成哈希码"
+            message=f"成功从 {len(tag_indices)} 个标签生成哈希码"
         )
 
     except Exception as e:
@@ -67,12 +67,12 @@ async def generate_label_hash(label_indices: List[int]):
 
 
 @router.post("/batch-hash")
-async def batch_generate_label_hash(label_indices_list: List[List[int]]):
+async def batch_generate_tag_hash(tag_indices_list: List[List[int]]):
     """
     批量从标签索引生成哈希码。
 
     参数：
-    - label_indices_list: 标签索引列表的列表
+    - tag_indices_list: 标签索引列表的列表
 
     返回：
     - 哈希码列表
@@ -84,19 +84,19 @@ async def batch_generate_label_hash(label_indices_list: List[List[int]]):
 
         # 获取标签维度
         tags = dataset_service.get_tags()
-        label_dim = tags.shape[1] if tags is not None else 1386
+        tag_dim = tags.shape[1] if tags is not None else 1386
 
         # 构建标签向量矩阵
-        label_vectors = []
-        for label_indices in label_indices_list:
-            vec = np.zeros(label_dim, dtype=np.float32)
-            for idx in label_indices:
-                if 0 <= idx < label_dim:
+        tag_vectors = []
+        for tag_indices in tag_indices_list:
+            vec = np.zeros(tag_dim, dtype=np.float32)
+            for idx in tag_indices:
+                if 0 <= idx < tag_dim:
                     vec[idx] = 1.0
-            label_vectors.append(vec)
+            tag_vectors.append(vec)
 
         # 转换为张量
-        texts_tensor = torch.from_numpy(np.stack(label_vectors)).float()
+        texts_tensor = torch.from_numpy(np.stack(tag_vectors)).float()
 
         # 批量生成哈希码
         hash_codes = dcmh_service.generate_text_code(texts_tensor)
@@ -104,7 +104,7 @@ async def batch_generate_label_hash(label_indices_list: List[List[int]]):
         return {
             "success": True,
             "hash_codes": hash_codes.tolist(),
-            "num_texts": len(label_indices_list),
+            "num_texts": len(tag_indices_list),
             "bit_dim": dcmh_service.bit_dim
         }
 
@@ -113,19 +113,19 @@ async def batch_generate_label_hash(label_indices_list: List[List[int]]):
 
 
 @router.get("/dimension")
-async def get_label_dimension():
+async def get_tag_dimension():
     """获取标签向量维度。"""
     try:
         dataset_service = get_dataset_service()
         dataset_service.load_data()
 
         tags = dataset_service.get_tags()
-        label_dim = tags.shape[1] if tags is not None else 1386
+        tag_dim = tags.shape[1] if tags is not None else 1386
 
         return {
             "success": True,
-            "label_dim": label_dim,
-            "message": f"标签向量维度为 {label_dim}"
+            "tag_dim": tag_dim,
+            "message": f"标签向量维度为 {tag_dim}"
         }
 
     except Exception as e:

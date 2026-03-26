@@ -251,7 +251,7 @@ class MatDatasetService:
             return self._tag_mapping
         return [f'tag_{i}' for i in range(self.y_dim)]
 
-    def get_label_names_from_yall_indices(self, yall_indices: List[int]) -> List[str]:
+    def get_tag_names_from_yall_indices(self, yall_indices: List[int]) -> List[str]:
         """
         根据 YAll 索引获取标签名。
 
@@ -300,13 +300,17 @@ class MatDatasetService:
         return DataLoader(dataset, batch_size=batch_size,
                          shuffle=shuffle, num_workers=num_workers)
 
-    def create_text_dataset(self, indices: np.ndarray):
+    def create_text_dataset(self, indices: np.ndarray, normalize: bool = False):
         """
         创建文本数据集。
 
         直接从 .mat 文件读取 YAll。
+
+        参数：
+            indices: 样本索引数组
+            normalize: 是否零均值归一化（默认 False，与训练时保持一致）
         """
-        return MatTextDataset(self.mat_path, indices)
+        return MatTextDataset(self.mat_path, indices, normalize=normalize)
 
     def get_status(self) -> Dict[str, Any]:
         """获取服务状态。"""
@@ -371,14 +375,14 @@ class MatTextDataset(Dataset):
     用于生成文本哈希码。
     """
 
-    def __init__(self, mat_path: Path, indices: np.ndarray, normalize: bool = True):
+    def __init__(self, mat_path: Path, indices: np.ndarray, normalize: bool = False):
         """
         初始化数据集。
 
         参数：
             mat_path: .mat 文件路径
             indices: 样本索引数组
-            normalize: 是否零均值归一化
+            normalize: 是否零均值归一化（默认 False，与训练时保持一致）
         """
         self.mat_path = Path(mat_path)
         self.indices = indices
@@ -420,9 +424,9 @@ class MatTextDataset(Dataset):
             yall = f['YAll'][actual_idx]
             if hasattr(yall, 'toarray'):
                 yall = yall.toarray()
-            labels = torch.from_numpy(yall.flatten().astype(np.float32))
+            tags_raw = torch.from_numpy(yall.flatten().astype(np.float32))
 
-        return tags_tensor, labels, idx
+        return tags_tensor, tags_raw, idx
 
 
 # 兼容旧接口

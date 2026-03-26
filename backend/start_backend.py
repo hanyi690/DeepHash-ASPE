@@ -8,9 +8,14 @@
 import sys
 from pathlib import Path
 
-# 添加项目根目录
-sys.path.insert(0, str(Path(__file__).parent))
-sys.path.insert(0, str(Path(__file__).parent / "reference" / "DCMH"))
+# 获取项目根目录 (backend 的父目录)
+PROJECT_ROOT = Path(__file__).parent.parent
+BACKEND_DIR = Path(__file__).parent
+
+# 添加项目根目录到 sys.path
+sys.path.insert(0, str(PROJECT_ROOT))
+# 添加 references/DCMH 目录
+sys.path.insert(0, str(PROJECT_ROOT / "references" / "DCMH"))
 
 import uvicorn
 

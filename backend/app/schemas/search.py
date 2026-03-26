@@ -70,7 +70,7 @@ class HashCodeResponse(BaseModel):
 class EncryptDatabaseRequest(BaseModel):
     """加密数据库请求。"""
     hash_codes: List[List[int]] = Field(..., description="哈希码列表")
-    labels: Optional[List[List[int]]] = None
+    tags: Optional[List[List[int]]] = None
 
 
 class EncryptDatabaseResponse(BaseModel):
@@ -104,10 +104,10 @@ CIR_DATASETS = ['roxford5k', 'rparis6k']
 class SearchRequest(BaseModel):
     """搜索请求。"""
     query_type: str = Field(
-        default="label_to_image",
-        description="查询类型：label_to_image | image_to_label"
+        default="tag_to_image",
+        description="查询类型：tag_to_image | image_to_tag"
     )
-    label_indices: List[int] = Field(default=[], description="用户选择的标签索引")
+    tag_indices: List[int] = Field(default=[], description="用户选择的标签索引")
     query_image: Optional[str] = None
     dataset: str = Field(default="flickr25k", description="数据集名称：flickr25k | nuswide")
     top_k: int = Field(default=10, ge=1, le=100)
@@ -120,22 +120,43 @@ class SearchResult(BaseModel):
     image_id: int
     score: float
     distance: float
-    labels: List[int] = []  # 该图像的标签索引列表 (YAll 索引)
-    label_names: List[str] = []  # 该图像的标签名称列表
-    hit_labels: List[int] = []  # 命中的查询标签索引 (YAll 索引)
-    hit_label_names: List[str] = []  # 命中的查询标签名称
+    tags: List[int] = []  # 该图像的标签索引列表 (YAll 索引)
+    tag_names: List[str] = []  # 该图像的标签名称列表
+    hit_tags: List[int] = []  # 命中的查询标签索引 (YAll 索引)
+    hit_tag_names: List[str] = []  # 命中的查询标签名称
     thumbnail_url: Optional[str] = None
     hash_code: Optional[List[int]] = None  # 哈希码展示
+    category_hit: bool = False  # LAll 类别是否命中
+    tag_hit: bool = False  # YAll 标签是否命中
 
 
-class ImageToLabelResult(BaseModel):
+class HitStats(BaseModel):
+    """命中率统计。"""
+    total_results: int
+    # 标签命中（YAll）
+    tag_hits: int
+    tag_hit_rate: float
+    # 类别命中（LAll）- 与评估 mAP 对应
+    category_hits: int = 0
+    category_hit_rate: float = 0.0
+    # 查询信息
+    query_tags: List[int] = []
+    query_tag_names: List[str] = []
+    # 兼容旧字段
+    hits: int = 0  # 等同于 tag_hits
+    hit_rate: float = 0.0  # 等同于 tag_hit_rate
+    query_tag_count: int = 0
+
+
+class ImageToTagResult(BaseModel):
     """图像→标签检索结果。"""
     rank: int
     image_id: int  # 来源图像ID
-    labels: List[int]  # 标签索引 (YAll 索引)
-    label_names: List[str] = []  # 标签名称列表
+    tags: List[int]  # 标签索引 (YAll 索引)
+    tag_names: List[str] = []  # 标签名称列表
     score: float
     distance: float
+    thumbnail_url: Optional[str] = None  # 来源图像缩略图URL
 
 
 class EncryptionInfo(BaseModel):
@@ -151,10 +172,10 @@ class SearchResponse(BaseModel):
     """搜索响应。"""
     success: bool
     query_type: str
-    label_indices: List[int] = []
-    query_label_names: List[str] = []  # 查询标签名称列表
+    tag_indices: List[int] = []
+    query_tag_names: List[str] = []  # 查询标签名称列表
     results: List[SearchResult] = []  # T2I/I2I 返回图像结果
-    label_results: List["ImageToLabelResult"] = []  # I2T 返回标签结果
+    tag_results: List["ImageToTagResult"] = []  # I2T 返回标签结果
     total_results: int
     search_time_ms: float
     hit_stats: Optional[Dict[str, Any]] = None  # 命中率统计
@@ -197,9 +218,9 @@ class SystemStatus(BaseModel):
 
 # ============== 标签相关模式 ==============
 
-class LabelsResponse(BaseModel):
+class TagsResponse(BaseModel):
     """标签列表响应。"""
     success: bool
     total: int
-    label_dim: int  # 标签向量维度 (1386 for Flickr25K)
+    tag_dim: int  # 标签向量维度 (1386 for Flickr25K)
     message: str = "标签列表获取成功"

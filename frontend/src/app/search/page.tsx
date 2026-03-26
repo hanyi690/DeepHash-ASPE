@@ -13,7 +13,7 @@ import {
   getDatasetStatus,
   DatasetStatus,
   SearchResult,
-  ImageToLabelResult,
+  ImageToTagResult,
   EncryptionInfo,
   CIRSearchResult,
   CIRStatus,
@@ -23,11 +23,11 @@ import {
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 // 检索模式类型
-type SearchMode = 'label_to_image' | 'image_to_label' | 'image_to_image';
+type SearchMode = 'tag_to_image' | 'image_to_tag' | 'image_to_image';
 
 export default function UnifiedSearchPage() {
   // 检索模式
-  const [mode, setMode] = useState<SearchMode>('label_to_image');
+  const [mode, setMode] = useState<SearchMode>('tag_to_image');
   const [useEncrypted, setUseEncrypted] = useState(true);
   const [topK, setTopK] = useState(10);
 
@@ -45,7 +45,7 @@ export default function UnifiedSearchPage() {
   // 结果状态
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
-  const [labelResults, setLabelResults] = useState<ImageToLabelResult[]>([]);
+  const [tagResults, setTagResults] = useState<ImageToTagResult[]>([]);
   const [cirResults, setCirResults] = useState<CIRSearchResult[]>([]);
   const [error, setError] = useState('');
   const [encryptionInfo, setEncryptionInfo] = useState<EncryptionInfo | null>(null);
@@ -87,12 +87,12 @@ export default function UnifiedSearchPage() {
   // 执行检索
   const handleSearch = async () => {
     // 验证输入
-    if (mode === 'label_to_image' && selectedTags.length === 0) {
+    if (mode === 'tag_to_image' && selectedTags.length === 0) {
       setError('请选择至少一个标签');
       return;
     }
 
-    if ((mode === 'image_to_label' || mode === 'image_to_image') && !uploadedImage) {
+    if ((mode === 'image_to_tag' || mode === 'image_to_image') && !uploadedImage) {
       setError('请上传查询图像');
       return;
     }
@@ -100,7 +100,7 @@ export default function UnifiedSearchPage() {
     setLoading(true);
     setError('');
     setResults([]);
-    setLabelResults([]);
+    setTagResults([]);
     setCirResults([]);
     setEncryptionInfo(null);
     setHitStats(null);
@@ -124,7 +124,7 @@ export default function UnifiedSearchPage() {
   const handleDCMHSearch = async () => {
     // 如果是图搜标签模式，需要将 blob URL 转换为 base64
     let queryImageData: string | undefined = undefined;
-    if (mode === 'image_to_label' && uploadedImage) {
+    if (mode === 'image_to_tag' && uploadedImage) {
       // 从 blob URL 获取图像数据并转换为 base64
       const response = await fetch(uploadedImage);
       const blob = await response.blob();
@@ -137,7 +137,7 @@ export default function UnifiedSearchPage() {
 
     const response = await axios.post(`${API_BASE}/api/search`, {
       query_type: mode,
-      label_indices: mode === 'label_to_image' ? selectedTags : undefined,
+      tag_indices: mode === 'tag_to_image' ? selectedTags : undefined,
       query_image: queryImageData,
       dataset: dcmhDataset,
       top_k: topK,
@@ -147,8 +147,8 @@ export default function UnifiedSearchPage() {
     setEncryptionInfo(response.data.encryption_info || null);
     setHitStats(response.data.hit_stats || null);
 
-    if (mode === 'image_to_label') {
-      setLabelResults(response.data.label_results || []);
+    if (mode === 'image_to_tag') {
+      setTagResults(response.data.tag_results || []);
     } else {
       setResults(response.data.results || []);
     }
@@ -207,9 +207,9 @@ export default function UnifiedSearchPage() {
   // 获取模式标题
   const getModeTitle = () => {
     switch (mode) {
-      case 'label_to_image':
+      case 'tag_to_image':
         return '标签搜图';
-      case 'image_to_label':
+      case 'image_to_tag':
         return '图搜标签';
       case 'image_to_image':
         return '图搜图';
@@ -234,9 +234,9 @@ export default function UnifiedSearchPage() {
         <div className="flex flex-wrap items-center gap-4 mb-6">
           <div className="flex space-x-2 p-1 bg-gray-100 rounded-xl">
             <button
-              onClick={() => setMode('label_to_image')}
+              onClick={() => setMode('tag_to_image')}
               className={`px-4 py-2 rounded-lg font-medium transition-all duration-200 ${
-                mode === 'label_to_image'
+                mode === 'tag_to_image'
                   ? 'bg-white text-[#6366F1] shadow-sm'
                   : 'text-gray-600 hover:text-gray-900'
               }`}
@@ -254,9 +254,9 @@ export default function UnifiedSearchPage() {
               </div>
             </button>
             <button
-              onClick={() => setMode('image_to_label')}
+              onClick={() => setMode('image_to_tag')}
               className={`px-4 py-2 rounded-lg font-medium transition-all duration-200 ${
-                mode === 'image_to_label'
+                mode === 'image_to_tag'
                   ? 'bg-white text-[#6366F1] shadow-sm'
                   : 'text-gray-600 hover:text-gray-900'
               }`}
@@ -336,7 +336,7 @@ export default function UnifiedSearchPage() {
         )}
 
         {/* 查询输入区域 */}
-        {mode === 'label_to_image' ? (
+        {mode === 'tag_to_image' ? (
           <div>
             {/* 标签选择器 */}
             <TagSelector
@@ -534,7 +534,7 @@ export default function UnifiedSearchPage() {
       )}
 
       {/* 图搜标签结果 */}
-      {labelResults.length > 0 && (
+      {tagResults.length > 0 && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -545,26 +545,39 @@ export default function UnifiedSearchPage() {
             检索结果 - 相关标签
           </h3>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-            {labelResults.map((result) => (
+            {tagResults.map((result) => (
               <div
                 key={result.rank}
                 className="bg-gray-50 rounded-lg p-4 text-center"
               >
+                {/* 缩略图 */}
+                {result.thumbnail_url && (
+                  <div className="mb-3">
+                    <img
+                      src={`${API_BASE}${result.thumbnail_url}`}
+                      alt={`来源图像 ${result.image_id}`}
+                      className="w-full h-24 object-cover rounded-lg mx-auto"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = '/placeholder.png';
+                      }}
+                    />
+                  </div>
+                )}
                 <div className="text-sm font-medium text-gray-800 mb-1">
                   来源图像: {result.image_id}
                 </div>
                 <div className="flex flex-wrap gap-1 justify-center mb-2">
-                  {(result.label_names || result.labels.slice(0, 5)).map((label, idx) => (
+                  {(result.tag_names || result.tags.slice(0, 5)).map((tag, idx) => (
                     <span
                       key={idx}
                       className="px-2 py-0.5 bg-[#6366F1]/10 text-[#6366F1] rounded text-xs"
                     >
-                      {label}
+                      {tag}
                     </span>
                   ))}
-                  {(result.label_names?.length || result.labels.length) > 5 && (
+                  {(result.tag_names?.length || result.tags.length) > 5 && (
                     <span className="text-xs text-gray-500">
-                      +{(result.label_names?.length || result.labels.length) - 5}
+                      +{(result.tag_names?.length || result.tags.length) - 5}
                     </span>
                   )}
                 </div>
@@ -589,10 +602,11 @@ export default function UnifiedSearchPage() {
               rank: r.rank,
               image_id: r.rank,
               score: r.score,
-              // 余弦相似度范围 [-1, 1]，距离 = 1 - score，范围 [0, 2]
-              // 对于相似图像，score 通常在 [0, 1]，距离在 [0, 1]
               distance: Math.max(0, 1 - r.score),
-              labels: [],
+              tags: [],
+              tag_names: [],
+              hit_tags: [],
+              hit_tag_names: [],
               thumbnail_url: r.image_url,
             }))}
           />
@@ -605,18 +619,8 @@ export default function UnifiedSearchPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="p-4 bg-gray-50 rounded-lg">
             <div className="flex items-center gap-2 mb-2">
-              <svg
-                className="w-5 h-5 text-[#6366F1]"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"
-                />
+              <svg className="w-5 h-5 text-[#6366F1]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
               </svg>
               <span className="font-medium">标签搜图</span>
             </div>
@@ -626,44 +630,24 @@ export default function UnifiedSearchPage() {
           </div>
           <div className="p-4 bg-gray-50 rounded-lg">
             <div className="flex items-center gap-2 mb-2">
-              <svg
-                className="w-5 h-5 text-[#6366F1]"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-                />
+              <svg className="w-5 h-5 text-[#6366F1]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
               </svg>
               <span className="font-medium">图搜标签</span>
             </div>
             <p className="text-sm text-gray-600">
-              上传图像，预测图像的相关标签。跨模态检索的图像→文本方向。
+              上传图像，检索该图像的相关标签。基于 DCMH 深度跨模态哈希。
             </p>
           </div>
           <div className="p-4 bg-gray-50 rounded-lg">
             <div className="flex items-center gap-2 mb-2">
-              <svg
-                className="w-5 h-5 text-[#6366F1]"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
-                />
+              <svg className="w-5 h-5 text-[#6366F1]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
-              <span className="font-medium">图搜图 (CIR)</span>
+              <span className="font-medium">图搜图</span>
             </div>
             <p className="text-sm text-gray-600">
-              基于 CNN 特征的图像检索，支持 SkNN 隐私保护检索模式。
+              上传图像，检索相似图像。基于 CNN 特征的图像检索。
             </p>
           </div>
         </div>

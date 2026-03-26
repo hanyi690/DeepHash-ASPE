@@ -54,30 +54,38 @@ export interface SearchResult {
   image_id: number;
   score: number;
   distance: number;
-  labels: number[];  // YAll 索引
-  label_names: string[];  // 标签名称
-  hit_labels: number[];  // 命中的查询标签索引
-  hit_label_names: string[];  // 命中的查询标签名称
+  tags: number[];  // YAll 索引
+  tag_names: string[];  // 标签名称
+  hit_tags: number[];  // 命中的查询标签索引
+  hit_tag_names: string[];  // 命中的查询标签名称
   thumbnail_url?: string;
   hash_code?: number[];
+  category_hit: boolean;  // LAll 类别是否命中
+  tag_hit: boolean;  // YAll 标签是否命中
 }
 
-export interface ImageToLabelResult {
+export interface ImageToTagResult {
   rank: number;
   image_id: number;
-  labels: number[];  // YAll 索引
-  label_names: string[];  // 标签名称
+  tags: number[];  // YAll 索引
+  tag_names: string[];  // 标签名称
   score: number;
   distance: number;
+  thumbnail_url?: string;  // 来源图像缩略图URL
 }
 
 export interface HitStats {
   total_results: number;
   hits: number;
   hit_rate: number;
-  query_label_count: number;
-  query_labels: number[];
-  query_label_names: string[];
+  query_tag_count: number;
+  query_tags: number[];
+  query_tag_names: string[];
+  // 两种命中率
+  tag_hits: number;
+  tag_hit_rate: number;
+  category_hits: number;
+  category_hit_rate: number;
 }
 
 export interface EncryptionInfo {
@@ -91,10 +99,10 @@ export interface EncryptionInfo {
 export interface UnifiedSearchResponse {
   success: boolean;
   query_type: string;
-  label_indices?: number[];
-  query_label_names?: string[];  // 查询标签名称列表
+  tag_indices?: number[];
+  query_tag_names?: string[];  // 查询标签名称列表
   results: SearchResult[];
-  label_results: ImageToLabelResult[];
+  tag_results: ImageToTagResult[];
   total_results: number;
   search_time_ms: number;
   hit_stats?: HitStats;  // 命中率统计
@@ -126,11 +134,11 @@ export interface SknnStatus {
 }
 
 // 标签统计类型
-export interface LabelStats {
+export interface TagStats {
   success: boolean;
   total: number;
-  label_dim: number;
-  top_labels: { index: number; count: number }[];
+  tag_dim: number;
+  top_tags: { index: number; count: number }[];
 }
 
 // ============== API 函数 ==============
@@ -146,3 +154,82 @@ export async function getSystemStatus(): Promise<SystemStatusResponse> {
   const response = await api.get('/api/datasets/system/status');
   return response.data;
 }
+
+// ============== DCMH 检索 API ==============
+
+export interface SearchRequest {
+  query_type: 'tag_to_image' | 'image_to_tag' | 'image_to_image';
+  tag_indices: number[];
+  query_image?: string;  // base64
+  dataset: DCMHDataset;
+  top_k: number;
+  use_encrypted: boolean;
+}
+
+export async function search(request: SearchRequest): Promise<UnifiedSearchResponse> {
+  const response = await api.post('/api/search', request);
+  return response.data;
+}
+
+export async function getTagStats(dataset: DCMHDataset = 'flickr25k'): Promise<TagStats> {
+  const response = await api.get(`/api/tags/stats?dataset=${dataset}`);
+  return response.data;
+}
+
+export async function getTagNames(dataset: string): Promise<{ success: boolean; tag_names: string[] }> {
+  const response = await api.get(`/api/tags/names/${dataset}`);
+  return response.data;
+}
+
+// ============== CIR 检索 API ==============
+
+export async function cirSearch(
+  queryImage: string,
+  dataset: CIRDataset = 'roxford5k',
+  topK: number = 10
+): Promise<{ success: boolean; results: CIRSearchResult[] }> {
+  const response = await api.post('/api/cir/search', {
+    query_image: queryImage,
+    dataset,
+    top_k: topK,
+  });
+  return response.data;
+}
+
+export async function getCIRStatus(dataset: CIRDataset): Promise<CIRStatus> {
+  const response = await api.get(`/api/cir/status/${dataset}`);
+  return response.data;
+}
+
+// ============== 图像 API ==============
+
+export async function getImage(imageId: number, dataset: string = 'flickr25k'): Promise<{
+  success: boolean;
+  image_id: number;
+  tags: number[];
+  total_tags: number;
+  thumbnail_url: string;
+}> {
+  const response = await api.get(`/api/images/${imageId}?dataset=${dataset}`);
+  return response.data;
+}
+
+// ============== 其他 API ==============
+
+export async function rebuildCache(dataset: string = 'flickr25k'): Promise<{ success: boolean; message: string }> {
+  const response = await api.post(`/api/search/rebuild-cache?dataset=${dataset}`);
+  return response.data;
+}
+
+export async function getSearchStatus(dataset: string = 'flickr25k'): Promise<{
+  cache_info: any;
+  dcmh_status: any;
+  aspe_status: any;
+  cache_initialized: boolean;
+  current_dataset: string;
+}> {
+  const response = await api.get(`/api/search/status?dataset=${dataset}`);
+  return response.data;
+}
+
+export default api;

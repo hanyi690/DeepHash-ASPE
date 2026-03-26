@@ -77,17 +77,17 @@ def preprocess_image_for_inference(image: Image.Image,
     return torch.from_numpy(img_np)
 
 
-def preprocess_label_vector(label_vector: np.ndarray) -> torch.Tensor:
+def preprocess_tag_vector(tag_vector: np.ndarray) -> torch.Tensor:
     """
     预处理标签向量。
 
     参数：
-        label_vector: multi-hot 标签向量 [y_dim]
+        tag_vector: multi-hot 标签向量 [y_dim]
 
     返回：
         预处理后的标签张量
     """
-    return torch.from_numpy(label_vector.astype(np.float32))
+    return torch.from_numpy(tag_vector.astype(np.float32))
 
 
 class DCMHService:
@@ -331,27 +331,27 @@ class DCMHService:
 
         return code
 
-    def generate_text_code_from_labels(self,
-                                        label_indices: List[int],
+    def generate_text_code_from_tags(self,
+                                        tag_indices: List[int],
                                         y_dim: int) -> torch.Tensor:
         """
         从标签索引生成文本哈希码。
 
         参数：
-            label_indices: 标签索引列表
+            tag_indices: 标签索引列表
             y_dim: 标签维度
 
         返回：
             哈希码张量 [1, bit_dim]
         """
         # 构建 multi-hot 向量
-        label_vector = np.zeros(y_dim, dtype=np.float32)
-        for idx in label_indices:
+        tag_vector = np.zeros(y_dim, dtype=np.float32)
+        for idx in tag_indices:
             if 0 <= idx < y_dim:
-                label_vector[idx] = 1.0
+                tag_vector[idx] = 1.0
 
         # 生成哈希码
-        text_tensor = torch.from_numpy(label_vector).unsqueeze(0)
+        text_tensor = torch.from_numpy(tag_vector).unsqueeze(0)
         return self.generate_text_code_single(text_tensor)
 
     def generate_database_codes(self, images: torch.Tensor, batch_size: int = 64) -> torch.Tensor:
