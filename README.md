@@ -156,21 +156,6 @@ Flickr25K 数据集的训练数据 `FLICKR-25K.mat` 和原始标签文件 `commo
 - `FLICKR-25K.mat` 中的 `YAll` 矩阵列顺序与 `common_tags.txt` 行顺序不对应
 - 原因：数据来源不同，DCMH 旧版数据的标签顺序已被打乱
 
-系统通过**频率匹配**推断列映射：
-
-```bash
-# 推断 YAll 列索引 -> tag 名称的映射
-python scripts/infer_tag_mapping.py
-
-# 输出: data/dcmh/flickr25k/tag_mapping.npy
-```
-
-**映射原理**：
-
-1. 统计 YAll 每列的 1 的数量
-2. 读取 common_tags.txt 中每个 tag 的频率
-3. 使用匈牙利算法匹配，最小化差异
-4. 验证：高频 tag（explore、sky、nikon 等）映射差异 < 35
 
 **映射文件**：
 
